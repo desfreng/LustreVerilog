@@ -1,0 +1,34 @@
+# -- Shared
+dist
+dist-*
+*.o
+*.hi
+*.prof
+*.aux
+.ghc.environment.*
+
+# -- Haskell
+cabal-dev
+*.hie
+*.chi
+*.chs.h
+*.dyn_o
+*.dyn_hi
+.hpc
+.hsenv
+
+*.aux
+*.hp
+*.eventlog
+.stack-work/
+.HTF/
+
+# -- Cabal
+.cabal-sandbox/
+cabal.sandbox.config
+cabal.project.local
+cabal.project.local~
+cabal-dev/
+.hpc/
+*.p_hi
+*.tix

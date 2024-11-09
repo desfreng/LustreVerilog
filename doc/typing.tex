@@ -1,0 +1,87 @@
+\documentclass[english, 12pt]{article}
+\usepackage[a4paper, top=1cm, bottom=2cm, left=1cm, right=1cm]{geometry}
+
+\usepackage[english]{babel}
+\usepackage[mono=false]{libertine}
+\usepackage{fontspec}
+\usepackage{microtype}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{ebproof}
+
+
+\DeclareMathOperator{\Si}{Signed}
+\DeclareMathOperator{\Un}{Unsigned}
+\DeclareMathOperator{\Ra}{Raw}
+\DeclareMathOperator{\Bool}{Bool}
+
+\begin{document}
+
+\section{Types}
+\begin{itemize}
+    \item Boolean type: $\Bool$,
+    \item Raw bit fields: $\Ra(n)$ with $n \geqslant 2$,
+    \item Signed bit fields: $\Si(n)$ with $n \geqslant 2$,
+    \item Unsigned bit fields: $\Un(n)$ with $n \geqslant 2$,
+    \item User defined: $\kappa$.
+\end{itemize}
+
+\section{General operations}
+
+\[
+    \begin{prooftree}
+        \hypo{\Gamma \vdash e_1 : \tau_1}
+        \hypo{\dots}
+        \hypo{\Gamma \vdash e_n : \tau_n}
+        \infer3[tuple $(n\geqslant2)$]{\Gamma \vdash (e_1, \dots, e_n) : (\tau_1, \dots, \tau_n)}
+    \end{prooftree}
+\]
+
+\[
+    \begin{prooftree}
+        \hypo{\Gamma \vdash e_1 : \tau_1}
+        \hypo{\dots}
+        \hypo{\Gamma \vdash e_n : \tau_n}
+        \infer3[tuple $(n\geqslant2)$]{\Gamma \vdash (e_1, \dots, e_n) : (\tau_1, \dots, \tau_n)}
+    \end{prooftree}
+\]
+
+
+\section{Boolean operations}
+
+\begin{align*}
+     &
+    \begin{prooftree}
+        \infer0[true]{\Gamma \vdash \texttt{true} : \Bool}
+    \end{prooftree}
+     &
+     &
+    \begin{prooftree}
+        \infer0[false]{\Gamma \vdash \texttt{false} : \Bool}
+    \end{prooftree}
+\end{align*}
+\begin{align*}
+     &
+    \begin{prooftree}
+        \hypo{\Gamma \vdash e : \Bool}
+        \hypo{\Gamma \vdash e' : \Bool}
+        \infer2[band]{\Gamma \vdash e \texttt{ and } e' : \Bool}
+    \end{prooftree}
+     &
+     &
+    \begin{prooftree}
+        \hypo{\Gamma \vdash e : \Bool}
+        \hypo{\Gamma \vdash e' : \Bool}
+        \infer2[bor]{\Gamma \vdash e \texttt{ or } e' : \Bool}
+    \end{prooftree}
+\end{align*}
+\[
+    \begin{prooftree}
+        \hypo{\Gamma \vdash e : \Bool}
+        \hypo{\Gamma \vdash e' : \Bool}
+        \infer2[bxor]{\Gamma \vdash e \texttt{ xor } e' : \Bool}
+    \end{prooftree}
+\]
+
+\end{document}
