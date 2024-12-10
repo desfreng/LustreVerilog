@@ -1,8 +1,10 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TupleSections #-}
 
-module Typing.TypeChecker (typeAst, TypeErrorDesc, module Typing.Ast) where
+module Typing.TypeChecker (module Typing.TypeChecker, module Typing.Ast) where
 
-import Control.Applicative
+import Control.Monad
 import Data.Bifunctor
 import Data.Foldable ()
 import Data.Functor
@@ -13,13 +15,14 @@ import Typing.Ast
 import Typing.Environments
 import Typing.TypeError
 
-typeAst :: FilePath -> Text -> Ast -> Either (ParseErrorBundle Text TypeErrorDesc) TAst
+typeAst :: FilePath -> Text -> Ast -> Either (ParseErrorBundle Text TypeError) TAst
 typeAst path txt (Ast l) = runCanFail path txt $ runNodeEnv $ mapM_ typeNode l
 
 typeNode :: Localized Node -> NodeEnv ()
 typeNode locNode = do
-  (nodeCtx, tEqs) <- evalIn typeVarDecls (canFailMapM typeEq (nodeEqs node))
-  addNode locNode (nodeName node) nodeCtx tEqs
+  nodeEnv <- runNodeVarEnv typeVarDecls
+  tEqs <- sequenceA <$> mapM (typeCheckIn nodeEnv . typeEq) (nodeEqs node)
+  addNode locNode (nodeName node) nodeEnv tEqs
   where
     node = unwrap locNode
 
@@ -29,183 +32,172 @@ typeNode locNode = do
       mapM_ (typeDecl addOutputVariable) (nodeOutputs node)
       mapM_ (typeDecl addLocalVariable) (nodeLocals node)
 
-typeDecl :: (Localized Ident -> CanFail AtomicType -> NodeVarEnv ()) -> IdentDecl -> NodeVarEnv ()
+typeDecl :: (Localized Ident -> CanFail AtomicTType -> NodeVarEnv ()) -> IdentDecl -> NodeVarEnv ()
 typeDecl f (IdentDecl declIdent declType) = typeType declType >>= f declIdent
 
-typeType :: Localized AtomicType -> NodeVarEnv (CanFail AtomicType)
-typeType = return . pure . unwrap
-
-typeEq :: Equation -> ExprEnv (CanFail TEquation)
-typeEq (Equation p e) = typePat p >>= fmap collapse . traverse buildEq
+typeType :: Localized LustreType -> NodeVarEnv (CanFail AtomicTType)
+typeType t = typeType' $ unwrap t
   where
-    buildEq :: (TPattern, TType) -> ExprEnv (CanFail TEquation)
+    typeType' BoolType = return . pure $ TBool
+    typeType' (BitVectorType k s) = return . pure $ TBitVector k s
+
+typeEq :: Equation -> ExprEnv (CanFail (TEquation TypeCand))
+typeEq (Equation p e) = typePat p >>= collapseA . fmap buildEq
+  where
+    buildEq :: (TPattern, TType) -> ExprEnv (CanFail (TEquation TypeCand))
     buildEq (tp, typ) = fmap (tp,) <$> checkExprType typ e
 
 typePat :: Pattern -> ExprEnv (CanFail (TPattern, TType))
-typePat (PatIdent x) = fmap (bimap TPatAtomic Atom) <$> findVariable x
-typePat (PatTuple l) = fmap (bimap TPatTuple Tuple . Typing.Ast.unzip) . sequenceA <$> mapM typePat l
+typePat (PatIdent x) = fmap (bimap TPatAtomic TAtom) <$> findVariable x
+typePat (PatTuple l) = fmap (bimap TPatTuple TTuple . unbzip) . sequenceA <$> mapM typePat l
 
-checkExprType :: TType -> Expr -> ExprEnv (CanFail TExpr)
-checkExprType typ e = checkExprType' (unwrap e)
+expectType :: ExpectedAtom -> Expr -> ExprEnv (CanFail (TExpr TypeCand))
+expectType expAtom e = typeExpr Nothing e >>= collapseA . fmap (expectType' . unwrap)
   where
-    checkExprType' (ConstantExpr c) = collapse . fmap assertTyp <$> typeConstantExpr c
-    checkExprType' (IdentExpr i) = collapse . fmap assertTyp <$> typeIdentExpr i
-    checkExprType' (UnOpExpr op arg) = collapse . fmap assertTyp <$> typeUnOpExpr op arg
-    checkExprType' (BinOpExpr op lhs rhs) = collapse . fmap assertTyp <$> typeBinOpExpr e op lhs rhs
-    checkExprType' (AppExpr n args) = collapse . fmap assertTyp <$> typeAppExpr e n args
-    checkExprType' (TupleExpr l) = fmap (e $>) <$> checkTupleExprType e typ l
-    checkExprType' (IfExpr cond tb fb) = fmap (e $>) <$> checkIfExprType typ cond tb fb
-    checkExprType' (FbyExpr arg arg') = fmap (e $>) <$> checkFbyExprType typ arg arg'
+    expectType' (tE, tC) = fmap ((e $>) . (tE,)) <$> checkExpected (reportError e) expAtom tC
 
-    assertTyp (te, ty) =
-      let typeErr expd fnd = reportError e $ InvalidType expd fnd typ ty
-       in compareType typeErr typ ty $> (e $> (te, ty))
+checkExprType :: TType -> Expr -> ExprEnv (CanFail (TExpr TypeCand))
+checkExprType = typeExpr . Just
 
-compareType :: (TType -> TType -> CanFail ()) -> TType -> TType -> CanFail ()
-compareType f t1 t2 = case (t1, t2) of
-  (Atom x, Atom y) -> if x == y then pure () else f t1 t2
-  (Tuple t1L, Tuple t2L) ->
-    if length t1L == length t2L
-      then foldl compareElm (pure ()) $ Typing.Ast.zip t1L t2L
-      else f t1 t2
-  (Atom _, Tuple _) -> f t1 t2
-  (Tuple _, Atom _) -> f t1 t2
+findExprType :: Expr -> ExprEnv (CanFail (TExpr TypeCand))
+findExprType = typeExpr Nothing
+
+typeExpr :: Maybe TType -> Expr -> ExprEnv (CanFail (TExpr TypeCand))
+typeExpr typ e = fmap (e $>) <$> typeExpr' (unwrap e)
   where
-    compareElm acc (t1E, t2E) = (\() () -> ()) <$> acc <*> compareType f t1E t2E
+    r = reportError e
+    typeExpr' (ConstantExpr c) = typeConstantExpr r typ c
+    typeExpr' (IdentExpr i) = typeIdentExpr r typ i
+    typeExpr' (UnOpExpr op arg) = typeUnOpExpr r typ op arg
+    typeExpr' (BinOpExpr op lhs rhs) = typeBinOpExpr r typ op lhs rhs
+    typeExpr' (AppExpr n args) = typeAppExpr r typ n args
+    typeExpr' (TupleExpr l) = typeTupleExpr r typ l
+    typeExpr' (IfExpr cond tb fb) = typeIfExpr r typ cond tb fb
+    typeExpr' (FbyExpr arg arg') = typeFbyExpr r typ arg arg'
 
-findExprType :: Expr -> ExprEnv (CanFail TExpr)
-findExprType e = fmap (e $>) <$> findExprType' (unwrap e)
+type TExprCand = TExprDesc TypeCand
+
+buildAndUnify :: ErrorReporter -> Maybe TType -> TExprCand -> TypeCand -> ExprEnv (CanFail (TExprCand, TypeCand))
+buildAndUnify err (Just typ) e t = fmap (e,) <$> unifyWithTType err typ t
+buildAndUnify _ Nothing e t = return $ pure (e, t)
+
+typeConstantExpr :: ErrorReporter -> Maybe TType -> Constant -> ExprEnv (CanFail (TExprCand, TypeCand))
+typeConstantExpr err mtyp cst = constantTypeCand cst >>= buildAndUnify err mtyp (ConstantTExpr cst)
+
+typeIdentExpr :: ErrorReporter -> Maybe TType -> Localized Ident -> ExprEnv (CanFail (TExprCand, TypeCand))
+typeIdentExpr err mtyp var = findVariable var >>= collapseA . fmap buildIdent
   where
-    findExprType' (ConstantExpr c) = typeConstantExpr c
-    findExprType' (IdentExpr i) = typeIdentExpr i
-    findExprType' (UnOpExpr op arg) = typeUnOpExpr op arg
-    findExprType' (BinOpExpr op lhs rhs) = typeBinOpExpr e op lhs rhs
-    findExprType' (AppExpr n args) = typeAppExpr e n args
-    findExprType' (TupleExpr l) = findTupleExprType l
-    findExprType' (IfExpr cond tb fb) = findIfExprExpr e cond tb fb
-    findExprType' (FbyExpr arg arg') = findFbyExprExpr e arg arg'
+    buildIdent (varId, varTyp) = fromAtomicType varTyp >>= buildAndUnify err mtyp (VarTExpr varId)
 
-typeConstantExpr :: Constant -> ExprEnv (CanFail (TExprDesc, TType))
-typeConstantExpr c@(BoolConst _) = return . pure $ (ConstantTExpr c, Atom BoolType)
-typeConstantExpr c@(IntegerConst _) = return . pure $ (ConstantTExpr c, Atom IntegerType)
-
-typeIdentExpr :: Localized Ident -> ExprEnv (CanFail (TExprDesc, TType))
-typeIdentExpr v = fmap (bimap VarTExpr Atom) <$> findVariable v
-
-typeUnOpExpr :: UnOp -> Expr -> ExprEnv (CanFail (TExprDesc, TType))
-typeUnOpExpr UnNot e =
-  fmap ((,Atom BoolType) . UnOpTExpr UnMinus)
-    <$> checkExprType (Atom BoolType) e
-typeUnOpExpr UnMinus e =
-  fmap ((,Atom IntegerType) . UnOpTExpr UnMinus)
-    <$> checkExprType (Atom IntegerType) e
-
-typeBinOpExpr :: Localized a -> BinOp -> Expr -> Expr -> ExprEnv (CanFail (TExprDesc, TType))
-typeBinOpExpr l op lhs rhs =
+typeUnOpExpr :: ErrorReporter -> Maybe TType -> UnOp -> Expr -> ExprEnv (CanFail (TExprCand, TypeCand))
+typeUnOpExpr err mtyp op arg =
   case op of
-    BinEq -> cmpOp
-    BinNeq -> cmpOp
-    BinLt -> cmpOp
-    BinLe -> cmpOp
-    BinGt -> cmpOp
-    BinGe -> cmpOp
-    BinAdd -> intOp
-    BinSub -> intOp
+    UnNot -> expectType expectBool arg >>= collapseA . fmap buildNot
+    UnNeg -> expectType (expectBitVector Signed) arg >>= collapseA . fmap buildNeg
+  where
+    buildNot targ = buildAndUnify err mtyp (UnOpTExpr UnNot targ) (exprType targ)
+    buildNeg targ = buildAndUnify err mtyp (UnOpTExpr UnNeg targ) (exprType targ)
+
+typeBinOpExpr ::
+  ErrorReporter -> Maybe TType -> BinOp -> Expr -> Expr -> ExprEnv (CanFail (TExprCand, TypeCand))
+typeBinOpExpr err mtyp op lhs rhs =
+  case op of
+    BinEq -> intEqOp
+    BinNeq -> intEqOp
+    BinLt -> intCmpOp
+    BinLe -> intCmpOp
+    BinGt -> intCmpOp
+    BinGe -> intCmpOp
+    BinAdd -> do
+      tLhs <- expectType sigOrUnsig lhs
+      tRhs <- expectType sigOrUnsig rhs
+      collapseA $ buildBVOp <$> tLhs <*> tRhs
+    BinSub -> do
+      tLhs <- expectType (expectBitVector Signed) lhs
+      tRhs <- expectType (expectBitVector Signed) rhs
+      collapseA $ buildBVOp <$> tLhs <*> tRhs
     BinAnd -> boolOp
     BinOr -> boolOp
   where
-    cmpOp = collapse <$> (liftA2 buildCmpOp <$> findExprType lhs <*> findExprType rhs)
-    buildCmpOp tLhs tRhs =
-      let lhsTyp = exprType tLhs
-          rhsTyp = exprType tRhs
-          typeErr t1 t2 = reportError l $ NotSameType t1 t2 lhsTyp rhsTyp
-       in compareType typeErr lhsTyp rhsTyp $> (BinOpTExpr op tLhs tRhs, Atom BoolType)
+    sigOrUnsig = expectBitVector Unsigned <> expectBitVector Signed
+    rawSigOrUnsig = expectBitVector Raw <> expectBitVector Unsigned <> expectBitVector Signed
 
-    intOp = liftA2 buildIntOp <$> checkExprType (Atom IntegerType) lhs <*> checkExprType (Atom IntegerType) rhs
-    buildIntOp tLhs tRhs = (BinOpTExpr op tLhs tRhs, Atom IntegerType)
+    intEqOp = do
+      tLhs <- expectType rawSigOrUnsig lhs
+      tRhs <- expectType rawSigOrUnsig rhs
+      collapseA $ buildBoolOp <$> tLhs <*> tRhs
 
-    boolOp = liftA2 buildBoolOp <$> checkExprType (Atom BoolType) lhs <*> checkExprType (Atom BoolType) rhs
-    buildBoolOp tLhs tRhs = (BinOpTExpr op tLhs tRhs, Atom BoolType)
+    intCmpOp = do
+      tLhs <- expectType sigOrUnsig lhs
+      tRhs <- expectType sigOrUnsig rhs
+      collapseA $ buildBoolOp <$> tLhs <*> tRhs
 
-typeAppExpr :: Localized a -> Localized Ident -> [Expr] -> ExprEnv (CanFail (TExprDesc, TType))
-typeAppExpr loc node args = findNode node >>= fmap collapse . traverse typeAppExpr'
+    boolOp = do
+      tLhs <- expectType expectBool lhs
+      tRhs <- expectType expectBool rhs
+      collapseA $ buildBoolOp <$> tLhs <*> tRhs
+
+    buildBoolOp tLhs tRhs = do
+      _ <- unifyTypeCand err (exprType tLhs) (exprType tRhs)
+      resTyp <- fromAtomicType TBool
+      buildAndUnify err mtyp (BinOpTExpr op tLhs tRhs) resTyp
+
+    buildBVOp tLhs tRhs =
+      unifyTypeCand err (exprType tLhs) (exprType tRhs)
+        >>= collapseA . fmap (buildAndUnify err mtyp (BinOpTExpr op tLhs tRhs))
+
+typeAppExpr ::
+  ErrorReporter -> Maybe TType -> Localized Ident -> [Expr] -> ExprEnv (CanFail (TExprCand, TypeCand))
+typeAppExpr err mtyp node args = findNode node >>= collapseA . fmap typeAppExpr'
   where
-    typeAppExpr' :: (Localized NodeIdent, NodeSignature) -> ExprEnv (CanFail (TExprDesc, TType))
-    typeAppExpr' (nodeId, nodeSign) =
-      fmap ((,outputType nodeSign) . AppTExpr nodeId) <$> checkInputArgs nodeSign
-
-    checkInputArgs :: NodeSignature -> ExprEnv (CanFail [TExpr])
-    checkInputArgs nodeSign =
-      let nodeArr = nodeArity nodeSign
+    typeAppExpr' (nodeId, nodeSig) =
+      let nodeNbArr = nodeArity nodeSig
           nbArgs = length args
-       in case compare nodeArr nbArgs of
-            LT -> return . reportError loc $ TooManyArguments nodeArr nbArgs
-            EQ -> sequenceA <$> mapM checkInput (Prelude.zip (inputTypes nodeSign) args)
-            GT -> return . reportError loc $ MissingArgument nodeArr nbArgs
+          nodeIn = TAtom <$> inputTypes nodeSig
+       in case compare nodeNbArr nbArgs of
+            LT ->
+              err
+                <$> "Too many arguments provided. Expected "
+                  <> pure (show nodeNbArr)
+                  <> ", found "
+                  <> pure (show nbArgs)
+                  <> "."
+            GT ->
+              err
+                <$> "Too few arguments provided. Expected "
+                  <> pure (show nodeNbArr)
+                  <> ", found "
+                  <> pure (show nbArgs)
+                  <> "."
+            EQ -> do
+              tArgs <- sequenceA <$> zipWithM checkExprType nodeIn args
+              outTyp <- nodeOutputTypeCand nodeSig
+              collapseA $ buildAppExpr nodeId outTyp <$> tArgs
 
-    checkInput (atyp, e) = checkExprType (Atom atyp) e
+    buildAppExpr nodeId typ tArgs = buildAndUnify err mtyp (AppTExpr nodeId tArgs) typ
 
-findTupleExprType :: BiList Expr -> ExprEnv (CanFail (TExprDesc, TType))
-findTupleExprType l = fmap buildTupleExpr . sequenceA <$> mapM findExprType l
+typeTupleExpr :: ErrorReporter -> Maybe TType -> BiList Expr -> ExprEnv (CanFail (TExprCand, TypeCand))
+typeTupleExpr err mtyp args = mapM findExprType args >>= collapseA . fmap buildTupleExpr . sequenceA
   where
-    buildTupleExpr exprL =
-      (TupleTExpr exprL, Tuple $ exprType <$> exprL)
+    buildTupleExpr tArgs = tupleTypeCand (exprType <$> tArgs) >>= buildAndUnify err mtyp (TupleTExpr tArgs)
 
-findIfExprExpr :: Localized a -> Expr -> Expr -> Expr -> ExprEnv (CanFail (TExprDesc, TType))
-findIfExprExpr loc cond tb fb =
-  collapse
-    <$> ( liftA3
-            (buildIfExpr loc)
-            <$> checkExprType (Atom BoolType) cond
-            <*> findExprType tb
-            <*> findExprType fb
-        )
+typeIfExpr :: ErrorReporter -> Maybe TType -> Expr -> Expr -> Expr -> ExprEnv (CanFail (TExprCand, TypeCand))
+typeIfExpr err mtyp cond tb fb = do
+  tCond <- expectType expectBool cond
+  tTb <- findExprType tb
+  tFb <- findExprType fb
+  typ <- collapseA $ unifyBranches <$> tTb <*> tFb
+  collapseA $ buildIfExpr <$> tCond <*> tTb <*> tFb <*> typ
   where
-    buildIfExpr l tCond tTB tFB =
-      let tbTyp = exprType tTB
-          fbTyp = exprType tFB
-          typeErr t1 t2 = reportError l $ NotSameType t1 t2 tbTyp fbTyp
-       in compareType typeErr tbTyp fbTyp $> (IfTExpr tCond tTB tFB, tbTyp)
+    unifyBranches tTb tFb = unifyTypeCand err (exprType tTb) (exprType tFb)
+    buildIfExpr tCond tTb tFb = buildAndUnify err mtyp (IfTExpr tCond tTb tFb)
 
-findFbyExprExpr :: Localized a -> Expr -> Expr -> ExprEnv (CanFail (TExprDesc, TType))
-findFbyExprExpr loc initE nextE =
-  collapse
-    <$> ( liftA2 (buildFbyExpr loc)
-            <$> findExprType initE
-            <*> findExprType nextE
-        )
+typeFbyExpr :: ErrorReporter -> Maybe TType -> Expr -> Expr -> ExprEnv (CanFail (TExprCand, TypeCand))
+typeFbyExpr err mtyp initE nextE = do
+  tInitE <- findExprType initE
+  tNextE <- findExprType nextE
+  typ <- collapseA $ unifyInitNext <$> tInitE <*> tNextE
+  collapseA $ buildFbyExpr <$> tInitE <*> tNextE <*> typ
   where
-    buildFbyExpr l tInitE tNextE =
-      let initTyp = exprType tInitE
-          nextTyp = exprType tNextE
-          typeErr t1 t2 = reportError l $ NotSameType t1 t2 initTyp nextTyp
-       in compareType typeErr initTyp nextTyp $> (FbyTExpr tInitE tNextE, initTyp)
-
-checkTupleExprType :: Localized a -> TType -> BiList Expr -> ExprEnv (CanFail (TExprDesc, TType))
-checkTupleExprType loc typ@(Atom _) _ = return . reportError loc $ UnExpectedTuple typ
-checkTupleExprType loc typ@(Tuple typL) l =
-  let typArr = length typL
-      nbArgs = length l
-   in case compare typArr nbArgs of
-        LT -> return . reportError loc $ TooManyExpressions typArr nbArgs
-        EQ -> fmap buildTuple . sequenceA <$> mapM (uncurry checkExprType) (Typing.Ast.zip typL l)
-        GT -> return . reportError loc $ MissingExpression typArr nbArgs
-  where
-    buildTuple tl = (TupleTExpr tl, typ)
-
-checkIfExprType :: TType -> Expr -> Expr -> Expr -> ExprEnv (CanFail (TExprDesc, TType))
-checkIfExprType typ cond tb fb = do
-  tCond <- checkExprType (Atom BoolType) cond
-  tTB <- checkExprType typ tb
-  tFB <- checkExprType typ fb
-  return $ buildIfExpr <$> tCond <*> tTB <*> tFB
-  where
-    buildIfExpr tCond tTB tFB = (IfTExpr tCond tTB tFB, typ)
-
-checkFbyExprType :: TType -> Expr -> Expr -> ExprEnv (CanFail (TExprDesc, TType))
-checkFbyExprType typ initE nextE = do
-  tInitE <- checkExprType typ initE
-  tNextE <- checkExprType typ nextE
-  return $ buildFbyExpr <$> tInitE <*> tNextE
-  where
-    buildFbyExpr tInitE tNextE = (FbyTExpr tInitE tNextE, typ)
+    unifyInitNext tInitE tNextE = unifyTypeCand err (exprType tInitE) (exprType tNextE)
+    buildFbyExpr tInitE tNextE = buildAndUnify err mtyp (FbyTExpr tInitE tNextE)

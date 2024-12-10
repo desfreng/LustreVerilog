@@ -7,7 +7,7 @@ import Data.Text.Lazy (Text)
 import Data.Text.Lazy.Encoding (decodeUtf8)
 import Parsing.Parser
 import System.Environment (getArgs)
-import System.Exit (exitWith)
+import System.Exit (ExitCode (..), exitWith)
 import Text.Megaparsec
 import Text.Pretty.Simple (pPrint)
 import Typing.TypeChecker
@@ -25,10 +25,10 @@ main = do
 
 parseFile :: FilePath -> Text -> IO Ast
 parseFile path txt = case parse pFile path txt of
-  Left err -> putStrLn (errorBundlePretty err) >> exitWith undefined
+  Left err -> putStrLn (errorBundlePretty err) >> exitWith (ExitFailure 2)
   Right ast -> return ast
 
 typeFile :: FilePath -> Text -> Ast -> IO TAst
 typeFile path txt ast = case typeAst path txt ast of
-  Left err -> putStrLn (errorBundlePretty err) >> exitWith undefined
+  Left err -> putStrLn (errorBundlePretty err) >> exitWith (ExitFailure 3)
   Right tast -> return tast

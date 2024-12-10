@@ -3,6 +3,11 @@ module Parsing.Ast (module Commons.AstTypes, module Parsing.Ast) where
 import Commons.AstTypes
 import Data.List.NonEmpty
 
+data LustreType
+  = BoolType
+  | BitVectorType BitVectorKind BVSize
+  deriving (Show, Eq, Ord)
+
 type Expr = Localized ExprDesc
 
 data ExprDesc
@@ -22,7 +27,7 @@ data Pattern = PatIdent (Localized Ident) | PatTuple (BiList Pattern)
 data Equation = Equation Pattern Expr
   deriving (Show, Eq)
 
-data IdentDecl = IdentDecl (Localized Ident) (Localized AtomicType)
+data IdentDecl = IdentDecl (Localized Ident) (Localized LustreType)
   deriving (Show, Eq)
 
 data Node = Node

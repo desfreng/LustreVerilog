@@ -1,54 +1,51 @@
-module Typing.Ast (module Commons.AstTypes, module Typing.Ast) where
+module Typing.Ast (module Typing.Ast, module Commons.AstTypes, VarIdent, NodeIdent) where
 
 import Commons.AstTypes
 import Data.List.NonEmpty (NonEmpty)
 import Data.Map.Strict (Map)
+import Typing.Ids (NodeIdent (), VarIdent ())
 
--- | Unique Identifier of custom Data Type in a Lustre Program
--- newtype TypeIdent = TypeIdent Ident
---   deriving (Show, Eq, Ord)
-
--- | Unique Identifier of a variable in a Node/Function
-newtype VarIdent = VarIdent Ident
+-- | Atomic type (for instance of a variable)
+data AtomicTType
+  = -- | The Boolean Type
+    TBool
+  | -- | The BitVector Type
+    TBitVector BitVectorKind BVSize
   deriving (Show, Eq, Ord)
 
--- | Unique Identifier of a Node in a Lustre Program
-newtype NodeIdent = NodeIdent Ident
-  deriving (Show, Eq, Ord)
-
--- | Type of a Lustre Expression
+-- | Type of an Expression
 data TType
   = -- | An Atomic Type (Not a Tuple)
-    Atom AtomicType
+    TAtom AtomicTType
   | -- | A Composed Type, containing multiple types
-    Tuple (BiList TType)
+    TTuple (BiList TType)
   deriving (Show, Eq, Ord)
 
 -- | A Typed Expression in a Lustre Program
-type TExpr = Localized (TExprDesc, TType)
-
-exprType :: TExpr -> TType
-exprType (L _ (_, t) _) = t
+type TExpr typ = Localized (TExprDesc typ, typ)
 
 -- | The Description of what is an Expression
-data TExprDesc
+data TExprDesc typ
   = -- | A Constant Expression: @10@ or @false@
     ConstantTExpr Constant
   | -- | A Variable Expression
     VarTExpr (Localized VarIdent)
   | -- | A Unary Expression: @not e@ or @-e@
-    UnOpTExpr UnOp TExpr
+    UnOpTExpr UnOp (TExpr typ)
   | -- | A Binary Expression: @a + b@, @a <> b@, @a and b@, ...
-    BinOpTExpr BinOp TExpr TExpr
+    BinOpTExpr BinOp (TExpr typ) (TExpr typ)
   | -- | Call to another Node
-    AppTExpr (Localized NodeIdent) [TExpr]
+    AppTExpr (Localized NodeIdent) [TExpr typ]
   | -- | A Tuple of Expression: @(a, b, c)@
-    TupleTExpr (BiList TExpr)
+    TupleTExpr (BiList (TExpr typ))
   | -- | Conditional Expression: @if c then a else b@
-    IfTExpr {ifCond :: TExpr, ifTrue :: TExpr, ifFalse :: TExpr}
+    IfTExpr {ifCond :: TExpr typ, ifTrue :: TExpr typ, ifFalse :: TExpr typ}
   | -- | Initialized Delay Expression: @0 fby e@
-    FbyTExpr {fbyInit :: TExpr, fbyNext :: TExpr}
+    FbyTExpr {fbyInit :: TExpr typ, fbyNext :: TExpr typ}
   deriving (Show)
+
+exprType :: TExpr typ -> typ
+exprType = snd . unwrap
 
 -- | Left hand-side of a Lustre Equation
 data TPattern
@@ -59,10 +56,10 @@ data TPattern
   deriving (Show)
 
 -- | A Lustre Equation, variables of a Pattern are defined with a Lustre Expression
-type TEquation = (TPattern, TExpr)
+type TEquation typ = (TPattern, TExpr typ)
 
 -- | A Typed Lustre Node
-data TNode = TNode NodeContext [TEquation]
+data TNode = TNode NodeContext [TEquation TType]
   deriving (Show)
 
 data NodeContext = NodeContext
@@ -73,7 +70,7 @@ data NodeContext = NodeContext
     -- | List of the Local Variables of a Node
     tnodeLocal :: [Localized VarIdent],
     -- | Mapping from the Node's variables to their Types
-    tnodeVarTypes :: Map VarIdent AtomicType
+    tnodeVarTypes :: Map VarIdent AtomicTType
   }
   deriving (Show)
 
@@ -82,7 +79,7 @@ data NodeSignature = NodeSignature
   { -- | Arity of the Node
     nodeArity :: Int,
     -- | List of the type of the Input Variables of a Node
-    inputTypes :: [AtomicType],
+    inputTypes :: [AtomicTType],
     -- | Output Type of a Node
     outputType :: TType
   }

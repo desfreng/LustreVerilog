@@ -1,0 +1,10 @@
+/* type Bool = False | True */
+
+node f () returns (o : u4; j : bool);
+var i: int;
+let
+    o = 10 + 1;
+tel
+
+node g () returns (x: int);
+let x = 0; tel

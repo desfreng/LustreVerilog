@@ -8,24 +8,73 @@
 
 \usepackage{amsmath}
 \usepackage{amssymb}
+\usepackage{stmaryrd}
 \usepackage{ebproof}
 
 
-\DeclareMathOperator{\Si}{Signed}
-\DeclareMathOperator{\Un}{Unsigned}
-\DeclareMathOperator{\Ra}{Raw}
+\DeclareMathOperator{\Bit}{Bit}
 \DeclareMathOperator{\Bool}{Bool}
+
+\DeclareMathOperator{\Raw}{r}
+\DeclareMathOperator{\Signed}{s}
+\DeclareMathOperator{\Unsigned}{u}
+
+\newcommand{\UnOp}[2]{\ensuremath{\texttt{#1}~#2}}
+\newcommand{\BinOp}[3]{\ensuremath{#2~\texttt{#1}~#3}}
+\newcommand{\IfExpr}[3]{\ensuremath{\texttt{if}~#1~\texttt{then}~#2~\texttt{else}~#3}}
 
 \begin{document}
 
 \section{Types}
 \begin{itemize}
     \item Boolean type: $\Bool$,
-    \item Raw bit fields: $\Ra(n)$ with $n \geqslant 2$,
-    \item Signed bit fields: $\Si(n)$ with $n \geqslant 2$,
-    \item Unsigned bit fields: $\Un(n)$ with $n \geqslant 2$,
+    \item Raw bit-vectors: $\Bit(n, \Raw)$ with $n \geqslant 2$,
+    \item Signed bit-vectors: $\Bit(n, \Signed)$ with $n \geqslant 2$,
+    \item Unsigned bit-vectors: $\Bit(n, \Unsigned)$ with $n \geqslant 2$,
     \item User defined: $\kappa$.
 \end{itemize}
+
+\section{Base Cases}
+\[
+    \begin{prooftree}
+        \hypo{\Gamma(x) = \tau}
+        \infer1[var]{\Gamma \vdash x : \tau}
+    \end{prooftree}
+\]
+
+\begin{align*}
+     &
+    \begin{prooftree}
+        \infer0[true]{\Gamma \vdash \texttt{true} : \Bool}
+    \end{prooftree}
+     &
+     &
+    \begin{prooftree}
+        \infer0[false]{\Gamma \vdash \texttt{false} : \Bool}
+    \end{prooftree}
+\end{align*}
+
+\begin{align*}
+     &
+    \begin{prooftree}
+        \hypo{d \in \llbracket0; 2^{n} - 1\rrbracket}
+        \infer1[rawcst]{\Gamma \vdash d : \Bit(n, \Raw)}
+    \end{prooftree}
+     &
+     &
+    \begin{prooftree}
+        \hypo{d \in \llbracket0; 2^{n} - 1\rrbracket}
+        \infer1[unsigcst]{\Gamma \vdash d : \Bit(n, \Signed)}
+    \end{prooftree}
+     &
+     &
+    \begin{prooftree}
+        \hypo{d \in \llbracket-2^{n-1}; 2^{n-1}-1\rrbracket}
+        \infer1[sigcst]{\Gamma \vdash d : \Bit(n, \Signed)}
+    \end{prooftree}
+\end{align*}
+
+
 
 \section{General operations}
 
@@ -40,47 +89,75 @@
 
 \[
     \begin{prooftree}
-        \hypo{\Gamma \vdash e_1 : \tau_1}
-        \hypo{\dots}
-        \hypo{\Gamma \vdash e_n : \tau_n}
-        \infer3[tuple $(n\geqslant2)$]{\Gamma \vdash (e_1, \dots, e_n) : (\tau_1, \dots, \tau_n)}
+        \hypo{\Gamma \vdash c : \Bool}
+        \hypo{\Gamma \vdash e : \tau}
+        \hypo{\Gamma \vdash e' : \tau}
+        \infer3[if]{\Gamma \vdash \IfExpr{c}{e}{e'}: \tau}
     \end{prooftree}
 \]
 
-
-\section{Boolean operations}
-
-\begin{align*}
-     &
-    \begin{prooftree}
-        \infer0[true]{\Gamma \vdash \texttt{true} : \Bool}
-    \end{prooftree}
-     &
-     &
-    \begin{prooftree}
-        \infer0[false]{\Gamma \vdash \texttt{false} : \Bool}
-    \end{prooftree}
-\end{align*}
-\begin{align*}
-     &
-    \begin{prooftree}
-        \hypo{\Gamma \vdash e : \Bool}
-        \hypo{\Gamma \vdash e' : \Bool}
-        \infer2[band]{\Gamma \vdash e \texttt{ and } e' : \Bool}
-    \end{prooftree}
-     &
-     &
-    \begin{prooftree}
-        \hypo{\Gamma \vdash e : \Bool}
-        \hypo{\Gamma \vdash e' : \Bool}
-        \infer2[bor]{\Gamma \vdash e \texttt{ or } e' : \Bool}
-    \end{prooftree}
-\end{align*}
 \[
     \begin{prooftree}
+        \hypo{\Gamma \vdash e : \tau}
+        \hypo{\Gamma \vdash e' : \tau}
+        \infer2[fby]{\Gamma \vdash \BinOp{fby}{e}{e'}: \Bool}
+    \end{prooftree}
+\]
+
+\section{Boolean operations}
+\begin{align*}
+     &
+    \begin{prooftree}
         \hypo{\Gamma \vdash e : \Bool}
         \hypo{\Gamma \vdash e' : \Bool}
-        \infer2[bxor]{\Gamma \vdash e \texttt{ xor } e' : \Bool}
+        \infer2[and]{\Gamma \vdash \BinOp{and}{e}{e'} : \Bool}
+    \end{prooftree}
+     &
+     &
+    \begin{prooftree}
+        \hypo{\Gamma \vdash e : \Bool}
+        \hypo{\Gamma \vdash e' : \Bool}
+        \infer2[or]{\Gamma \vdash \BinOp{or}{e}{e'}: \Bool}
+    \end{prooftree}
+\end{align*}
+\begin{align*}
+     &
+    \begin{prooftree}
+        \hypo{\Gamma \vdash e : \Bool}
+        \hypo{\Gamma \vdash e' : \Bool}
+        \infer2[xor]{\Gamma \vdash \BinOp{xor}{e}{e'}: \Bool}
+    \end{prooftree}
+     &
+     &
+    \begin{prooftree}
+        \hypo{\Gamma \vdash e : \Bool}
+        \infer1[not]{\Gamma \vdash \UnOp{not}{e}: \Bool}
+    \end{prooftree}
+\end{align*}
+
+\section{Bit-vectors operations}
+
+\[
+    \begin{prooftree}
+        \hypo{\Gamma \vdash e : \Bit(n, \Raw)}
+        \hypo{\Gamma \vdash e' : \Bit(n, \Raw)}
+        \infer2[bvand]{\Gamma \vdash e \texttt{ land } e' : \Bit(n, \Raw)}
+    \end{prooftree}
+\]
+
+\[
+    \begin{prooftree}
+        \hypo{\Gamma \vdash e : \Bit(n, \Raw)}
+        \hypo{\Gamma \vdash e' : \Bit(n, \Raw)}
+        \infer2[bvor]{\Gamma \vdash e \texttt{ lor } e' : \Bit(n, \Raw)}
+    \end{prooftree}
+\]
+
+\[
+    \begin{prooftree}
+        \hypo{\Gamma \vdash e : \Bit(n, \Raw)}
+        \hypo{\Gamma \vdash e' : \Bit(n, \Raw)}
+        \infer2[bvxor]{\Gamma \vdash e \texttt{ lxor } e' : \Bit(n, \Raw)}
     \end{prooftree}
 \]
 

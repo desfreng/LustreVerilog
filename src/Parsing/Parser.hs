@@ -24,6 +24,8 @@ import Data.Char (isAsciiLower, isAsciiUpper, isDigit)
 import Data.Functor
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NEmpty
+import qualified Data.Set as Set
+import Data.String
 import Data.Text.Lazy (Text, cons)
 import Data.Void (Void)
 import Parsing.Ast
@@ -32,6 +34,46 @@ import Text.Megaparsec.Char (char, space1, string)
 import qualified Text.Megaparsec.Char.Lexer as L
 
 type Parser = Parsec Void Text
+
+data Keyword
+  = TRUE
+  | FALSE
+  | BOOL
+  | INT
+  | IF
+  | THEN
+  | ELSE
+  | NOT
+  | AND
+  | OR
+  | FBY
+  | NODE
+  | RETURNS
+  | VAR
+  | LET
+  | TEL
+  deriving (Eq, Ord, Enum, Bounded)
+
+kwToString :: (IsString a) => Keyword -> a
+kwToString TRUE = "true"
+kwToString FALSE = "false"
+kwToString BOOL = "bool"
+kwToString INT = "int"
+kwToString IF = "if"
+kwToString THEN = "then"
+kwToString ELSE = "else"
+kwToString NOT = "not"
+kwToString AND = "and"
+kwToString OR = "or"
+kwToString FBY = "fby"
+kwToString NODE = "node"
+kwToString RETURNS = "returns"
+kwToString VAR = "var"
+kwToString LET = "let"
+kwToString TEL = "tel"
+
+isKeyword :: (Eq a, IsString a) => a -> Bool
+isKeyword t = t `elem` (kwToString <$> [minBound .. maxBound])
 
 merge :: Localized a -> Localized b -> c -> Localized c
 merge (L beg _ _) (L _ _ end) c = L beg c end
@@ -61,14 +103,24 @@ isAlphaNum :: Char -> Bool
 isAlphaNum x = isAsciiLower x || isAsciiUpper x || isDigit x || x == '_'
 
 pIdent :: Parser (Localized Ident)
-pIdent = pLocalized (Ident <$> pIdent') <?> "identifier"
+pIdent = pLocalized pIdent' <?> "identifier"
   where
-    pIdent' = cons <$> satisfy isAsciiLower <*> takeWhileP Nothing isAlphaNum
+    pIdent' = do
+      o <- getOffset
+      fstLetter <- satisfy isAsciiLower
+      following <- takeWhileP Nothing isAlphaNum
+      let t = cons fstLetter following
+       in if isKeyword t
+            then
+              region (setErrorOffset o) $
+                failure (Just . Label $ 'k' :| "eyword") (Set.singleton . Label $ 'i' :| "dentifier")
+            else
+              return (Ident t)
 
-keyword :: Text -> Parser (Localized Text)
-keyword s = pLocalized pKeyword <?> "keyword"
+keyword :: Keyword -> Parser (Localized Text)
+keyword k = pLocalized pKeyword <?> "keyword"
   where
-    pKeyword = try $ string s <* notFollowedBy (satisfy isAlphaNum)
+    pKeyword = string (kwToString k) <* notFollowedBy (satisfy isAlphaNum)
 
 pInteger :: Parser (Localized Integer)
 pInteger = pLocalized pInteger'
@@ -84,15 +136,22 @@ pInteger = pLocalized pInteger'
 pBool :: Parser (Localized Bool)
 pBool = pTrue <|> pFalse
   where
-    pTrue = fmap (const True) <$> keyword "true"
-    pFalse = fmap (const False) <$> keyword "false"
+    pTrue = fmap (const True) <$> keyword TRUE
+    pFalse = fmap (const False) <$> keyword FALSE
 
-pType :: Parser (Localized AtomicType)
+pType :: Parser (Localized LustreType)
 pType =
   choice
-    [ fmap (const BoolType) <$> keyword "bool",
-      fmap (const IntegerType) <$> keyword "int"
+    [ fmap (const BoolType) <$> keyword BOOL,
+      pLocalized pRaw,
+      pLocalized pUnsig,
+      try (pLocalized pSig),
+      fmap (const (BitVectorType Signed (BVSize 32))) <$> keyword INT
     ]
+  where
+    pRaw = char 'r' >> BitVectorType Raw . BVSize <$> L.decimal
+    pUnsig = char 'u' >> BitVectorType Unsigned . BVSize <$> L.decimal
+    pSig = char 'i' >> BitVectorType Signed . BVSize <$> L.decimal
 
 pConstant :: Parser (Localized Constant)
 pConstant =
@@ -133,9 +192,9 @@ pIfExpr :: Parser Expr
 pIfExpr = buildIf <$> getOffset <*> pCond <*> pTrueBranch <*> pFalseBranch
   where
     buildIf beg cond tb fb@(L _ _ end) = L beg (IfExpr cond tb fb) end
-    pCond = keyword "if" *> pExpr
-    pTrueBranch = keyword "then" *> pExpr
-    pFalseBranch = keyword "else" *> pExpr
+    pCond = keyword IF *> pExpr
+    pTrueBranch = keyword THEN *> pExpr
+    pFalseBranch = keyword ELSE *> pExpr
 
 binary :: (Parser (Expr -> Expr -> Expr) -> a) -> Parser b -> (Expr -> Expr -> ExprDesc) -> a
 binary cstr s f = cstr $ f' <$ s
@@ -150,24 +209,22 @@ prefix s f = Prefix $ f' . L <$> getOffset <* s
 exprTable :: [[Operator Parser Expr]]
 exprTable =
   [ [ prefix (symbol "+") unwrap,
-      prefix (symbol "-") $ UnOpExpr UnMinus
+      prefix (symbol "-") $ UnOpExpr UnNeg
     ],
-    [prefix (keyword "not") $ UnOpExpr UnNot],
+    [prefix (keyword NOT) $ UnOpExpr UnNot],
     [ binary InfixL (symbol "+") $ BinOpExpr BinAdd,
       binary InfixL (symbol "-") $ BinOpExpr BinSub
     ],
     [ binary InfixN (symbol "==") $ BinOpExpr BinEq,
-      binary InfixN (symbol "!=") $ BinOpExpr BinNeq,
       binary InfixN (symbol "<>") $ BinOpExpr BinNeq,
       binary InfixN (symbol ">=") $ BinOpExpr BinGe,
       binary InfixN (symbol "<=") $ BinOpExpr BinLe,
       binary InfixN (symbol ">") $ BinOpExpr BinGt,
-      binary InfixN (symbol "=") $ BinOpExpr BinEq,
       binary InfixN (symbol "<") $ BinOpExpr BinLt
     ],
-    [binary InfixR (keyword "and") $ BinOpExpr BinAnd],
-    [binary InfixR (keyword "or") $ BinOpExpr BinOr],
-    [binary InfixR (keyword "fby") FbyExpr]
+    [binary InfixR (keyword AND) $ BinOpExpr BinAnd],
+    [binary InfixR (keyword OR) $ BinOpExpr BinOr],
+    [binary InfixR (keyword FBY) FbyExpr]
   ]
 
 pExpr :: Parser Expr
@@ -194,20 +251,19 @@ pDecl = buildDecls <$> Comb.sepBy1 pIdent comma <*> (colon *> pType)
 pNode :: Parser (Localized Node)
 pNode =
   pNode'
-    <$> keyword "node"
+    <$> keyword NODE
     <*> pIdent
-    <*> (pInputDecl <* keyword "returns")
+    <*> (pInputDecl <* keyword RETURNS)
     <*> (pOutputDecl <* semicolon)
     <*> pLocals
-    <*> some (try pEquation)
-    <*> keyword "tel"
+    <*> someTill_ pEquation (keyword TEL)
   where
     pInputDecl = concat <$> parens (sepBy pDeclList semicolon)
     pOutputDecl = join <$> parens (Comb.sepBy1 pDecl semicolon)
-    pLocals = keyword "var" *> pLocalsList <* keyword "let" <|> keyword "let" $> []
-    pLocalsList = fmap concat $ some . try $ pDeclList <* semicolon
+    pLocals = (concat <$> pLocalsList) <|> keyword LET $> []
+    pLocalsList = keyword VAR *> someTill (pDeclList <* semicolon) (keyword LET)
     pDeclList = NEmpty.toList <$> pDecl
-    pNode' beg nodeName nodeInputs nodeOutputs nodeLocals nodeEqs end = merge beg end $ Node {..}
+    pNode' beg nodeName nodeInputs nodeOutputs nodeLocals (nodeEqs, end) = merge beg end $ Node {..}
 
 pFile :: Parser Ast
 pFile = Ast <$> many pNode <* eof

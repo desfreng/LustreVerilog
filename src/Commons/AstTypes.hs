@@ -5,13 +5,16 @@ module Commons.AstTypes where
 import qualified Data.List as List
 import Data.Text.Lazy (Text, unpack)
 
-data AtomicType = BoolType | IntegerType
+newtype BVSize = BVSize Int
   deriving (Show, Eq, Ord)
+
+data BitVectorKind = Raw | Unsigned | Signed
+  deriving (Show, Eq, Ord, Enum, Bounded)
 
 data Constant = BoolConst Bool | IntegerConst Integer
   deriving (Show, Eq)
 
-data UnOp = UnNot | UnMinus
+data UnOp = UnNot | UnNeg
   deriving (Show, Eq)
 
 data BinOp
@@ -35,7 +38,7 @@ instance Show Ident where
   show (Ident ident) = unpack ident
 
 data Localized a = L Int a Int
-  deriving (Eq)
+  deriving (Eq, Ord)
 
 instance (Show a) => Show (Localized a) where
   show :: (Show a) => Localized a -> String
@@ -89,13 +92,13 @@ instance Traversable BiList where
   traverse :: (Applicative f) => (a -> f b) -> BiList a -> f (BiList b)
   traverse f (BiList x y l) = BiList <$> f x <*> f y <*> traverse f l
 
-unzip :: BiList (a, b) -> (BiList a, BiList b)
-unzip (BiList (x1, x2) (y1, y2) l) =
+unbzip :: BiList (a, b) -> (BiList a, BiList b)
+unbzip (BiList (x1, x2) (y1, y2) l) =
   let (l1, l2) = List.unzip l
    in (BiList x1 y1 l1, BiList x2 y2 l2)
 
-zip :: BiList a -> BiList b -> BiList (a, b)
-zip (BiList x1 y1 l1) (BiList x2 y2 l2) = BiList (x1, x2) (y1, y2) $ List.zip l1 l2
+bzip :: BiList a -> BiList b -> BiList (a, b)
+bzip (BiList x1 y1 l1) (BiList x2 y2 l2) = BiList (x1, x2) (y1, y2) $ List.zip l1 l2
 
 biListToList :: BiList a -> [a]
 biListToList (BiList x y l) = x : y : l

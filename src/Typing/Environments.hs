@@ -1,4 +1,8 @@
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TupleSections #-}
 
 module Typing.Environments
@@ -7,216 +11,230 @@ module Typing.Environments
     addNode,
     runNodeEnv,
     -- NodeVarEnv
+    NodeEnvironment (),
     NodeVarEnv (),
     addInputVariable,
     addOutputVariable,
     addLocalVariable,
+    runNodeVarEnv,
     -- ExprEnv
     ExprEnv (),
     findNode,
     findVariable,
-    -- Bind Monad
-    evalIn,
+    typeCheckIn,
+    -- Unifying functions
+    TypeUnifier (),
+    TypeCand (),
+    constantTypeCand,
+    tupleTypeCand,
+    fromAtomicType,
+    nodeOutputTypeCand,
+    unifyTypeCand,
+    unifyWithTType,
+    ExpectedAtom (),
+    Unif.expectBitVector,
+    Unif.expectBool,
+    checkExpected,
   )
 where
 
+import Control.Applicative
+import Control.Monad.Reader
+import Control.Monad.State.Strict
+import Control.Monad.Writer
 import Data.Functor
 import qualified Data.List as List
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Lazy (Map, (!))
 import qualified Data.Map.Lazy as Map
+import Data.String (IsString (..))
+import Data.Text.Lazy (unpack)
 import Typing.Ast
+import Typing.Ids
 import Typing.TypeError
+import Typing.Unification (ExpectedAtom, TypeCand, TypeUnifier)
+import qualified Typing.Unification as Unif
 
 -- # Section NodeEnv Monad
 
-type NodeState = Map NodeIdent (Maybe NodeSignature)
+type NodeState = Map NodeIdent (CanFail NodeSignature)
 
 type NodeWriter = CanFail [(NodeIdent, Localized TNode)]
 
-newtype NodeEnv a = NodeEnv {runNodeEnv' :: NodeState -> (a, NodeState, NodeWriter)}
-
-instance Functor NodeEnv where
-  {-# INLINEABLE fmap #-}
-  fmap :: (a -> b) -> NodeEnv a -> NodeEnv b
-  fmap f m = NodeEnv $ \s ->
-    let (a, s', w) = runNodeEnv' m s in (f a, s', w)
-
-instance Applicative NodeEnv where
-  {-# INLINEABLE pure #-}
-  pure :: a -> NodeEnv a
-  pure x = NodeEnv (x,,mempty)
-
-  {-# INLINEABLE (<*>) #-}
-  (<*>) :: NodeEnv (a -> b) -> NodeEnv a -> NodeEnv b
-  m1 <*> m2 = NodeEnv $ \s ->
-    let (f, s', w) = runNodeEnv' m1 s
-        (x, s'', w') = runNodeEnv' m2 s'
-     in (f x, s'', w <> w')
-
-instance Monad NodeEnv where
-  {-# INLINEABLE (>>=) #-}
-  (>>=) :: NodeEnv a -> (a -> NodeEnv b) -> NodeEnv b
-  m >>= f = NodeEnv $ \s ->
-    let (x, s', w) = runNodeEnv' m s
-        (y, s'', w') = runNodeEnv' (f x) s'
-     in (y, s'', w <> w')
+newtype NodeEnv a = NodeEnv (StateT NodeState (Writer NodeWriter) a)
+  deriving (Functor, Applicative, Monad)
 
 checkNode :: Localized TNode -> CanFail (Localized TNode)
 checkNode = pure -- TODO Check Node Here
 
-addNode :: Localized a -> Localized Ident -> CanFail NodeContext -> CanFail [TEquation] -> NodeEnv ()
-addNode loc name ctx eqs =
-  let nodeName = unwrap name
+addNode :: Localized a -> Localized Ident -> NodeEnvironment -> CanFail [TEquation TType] -> NodeEnv ()
+addNode loc name (NodeEnvironment {nCtx}) eqs =
+  let nodeName@(Ident n) = unwrap name
       nodeId = NodeIdent nodeName
-      tnode = collapse $ checkNode . (loc $>) <$> (TNode <$> ctx <*> eqs)
-   in NodeEnv $ \s ->
+      tnode = collapse $ checkNode . (loc $>) <$> (TNode <$> nCtx <*> eqs)
+   in NodeEnv $ do
+        s <- get
         case Map.lookup nodeId s of
-          Just _ -> ((), s, reportError name $ NodeAlreadyDeclared nodeName)
-          Nothing -> ((), Map.insert nodeId nodeSig s, List.singleton . (,) nodeId <$> tnode)
+          Just _ ->
+            tell (reportError name ("Variable " <> unpack n <> " is already declared."))
+          Nothing ->
+            put (Map.insert nodeId (buildSig <$> nCtx) s)
+              >> tell (List.singleton . (,) nodeId <$> tnode)
   where
-    nodeSig = withError Nothing (Just . buildSig) ctx
     buildSig n =
-      let varMap = tnodeVarTypes n
-          inputTyp = (!) varMap . unwrap <$> tnodeInput n
+      let varTyp = tnodeVarTypes n
+          inputTyp = (!) varTyp . unwrap <$> tnodeInput n
           outputTyp =
-            case (!) varMap . unwrap <$> tnodeOutput n of
-              x :| [] -> Atom x
-              x :| (y : l) -> Tuple $ BiList (Atom x) (Atom y) (Atom <$> l)
+            case (!) varTyp . unwrap <$> tnodeOutput n of
+              x :| [] -> TAtom x
+              x :| (y : l) -> TTuple $ BiList (TAtom x) (TAtom y) (TAtom <$> l)
        in NodeSignature (length inputTyp) inputTyp outputTyp
 
 runNodeEnv :: NodeEnv () -> CanFail TAst
-runNodeEnv m =
-  let ((), s, w) = runNodeEnv' m Map.empty
-      s' = Map.mapMaybe id s -- Invariant when w has no error, s has no Maybe
-   in TAst s' <$> w
+runNodeEnv (NodeEnv m) = let (((), s), w) = runWriter $ runStateT m Map.empty in TAst <$> sequenceA s <*> w
 
 -- # End Section
 
 -- # Section NodeVarType Monad
 
+type VarMapping = Map VarIdent (CanFail AtomicTType)
+
 data VarKind = Input | Output | Local
 
-type VarMapping = Map VarIdent (Maybe AtomicType)
+data NodeVarState = NodeVarState {varList :: CanFail [(VarKind, Localized VarIdent)], varMap :: VarMapping}
 
-data NodeVarState = NodeVarState
-  { vList :: CanFail [(VarKind, Localized VarIdent)],
-    vMap :: VarMapping
-  }
+data NodeEnvironment = NodeEnvironment {nCtx :: CanFail NodeContext, vMapping :: VarMapping}
 
-newtype NodeVarEnv a = NodeVarEnv {runNodeVarEnv' :: NodeVarState -> (a, NodeVarState)}
+newtype NodeVarEnv a = NodeVarEnv (State NodeVarState a)
+  deriving (Functor, Applicative, Monad)
 
-instance Functor NodeVarEnv where
-  {-# INLINEABLE fmap #-}
-  fmap :: (a -> b) -> NodeVarEnv a -> NodeVarEnv b
-  fmap f m = NodeVarEnv $ \s ->
-    let (x, s') = runNodeVarEnv' m s in (f x, s')
-
-instance Applicative NodeVarEnv where
-  {-# INLINEABLE pure #-}
-  pure :: a -> NodeVarEnv a
-  pure x = NodeVarEnv (x,)
-
-  {-# INLINEABLE (<*>) #-}
-  (<*>) :: NodeVarEnv (a -> b) -> NodeVarEnv a -> NodeVarEnv b
-  m1 <*> m2 = NodeVarEnv $ \s ->
-    let (f, s') = runNodeVarEnv' m1 s
-        (x, s'') = runNodeVarEnv' m2 s'
-     in (f x, s'')
-
-instance Monad NodeVarEnv where
-  {-# INLINEABLE (>>=) #-}
-  (>>=) :: NodeVarEnv a -> (a -> NodeVarEnv b) -> NodeVarEnv b
-  m >>= f = NodeVarEnv $ \s ->
-    let (x, s') = runNodeVarEnv' m s
-     in runNodeVarEnv' (f x) s'
-
-addVariable :: VarKind -> Localized Ident -> CanFail AtomicType -> NodeVarEnv ()
-addVariable k v typ =
-  let varName = unwrap v
-      varTyp = withError Nothing Just typ
-      locVarId = VarIdent <$> v
-      varId = unwrap locVarId
-   in NodeVarEnv $ \s ->
-        case Map.lookup varId (vMap s) of
-          -- Don't forget to carry the potential error coming from typ !
-          Just _ ->
-            ((), s {vList = addToList s $ addError typ v (VariableAlreadyDeclared varName)})
-          Nothing ->
-            ( (),
-              NodeVarState
-                { vList = addToList s $ typ $> [(k, locVarId)],
-                  vMap = Map.insert varId varTyp (vMap s)
-                }
-            )
+addVariable :: VarKind -> Localized Ident -> CanFail AtomicTType -> NodeVarEnv ()
+addVariable k v typ = NodeVarEnv $ modify addVariable'
   where
-    addToList s x = (<>) <$> vList s <*> x
+    Ident varName = unwrap v
+    locVarId = VarIdent <$> v
+    varId = unwrap locVarId
 
-addInputVariable :: Localized Ident -> CanFail AtomicType -> NodeVarEnv ()
+    addVariable' s = case Map.lookup varId (varMap s) of
+      -- Don't forget to carry the potential error coming from typ !
+      Just _ ->
+        s {varList = (<>) <$> varList s <*> addError typ v ("Variable " <> unpack varName <> " is already declared.")}
+      Nothing ->
+        s
+          { varList = (<>) <$> varList s <*> pure [(k, locVarId)],
+            varMap = Map.insert varId typ (varMap s)
+          }
+
+addInputVariable :: Localized Ident -> CanFail AtomicTType -> NodeVarEnv ()
 addInputVariable = addVariable Input
 
-addOutputVariable :: Localized Ident -> CanFail AtomicType -> NodeVarEnv ()
+addOutputVariable :: Localized Ident -> CanFail AtomicTType -> NodeVarEnv ()
 addOutputVariable = addVariable Output
 
-addLocalVariable :: Localized Ident -> CanFail AtomicType -> NodeVarEnv ()
+addLocalVariable :: Localized Ident -> CanFail AtomicTType -> NodeVarEnv ()
 addLocalVariable = addVariable Local
+
+runNodeVarEnv :: NodeVarEnv () -> NodeEnv NodeEnvironment
+runNodeVarEnv (NodeVarEnv m) =
+  let s = execState m NodeVarState {varList = pure [], varMap = Map.empty}
+      vL = filterList <$> varList s
+      vM = sequenceA (varMap s)
+   in NodeEnv . state $ (NodeEnvironment (buildCtx <$> vL <*> vM) (varMap s),)
+  where
+    filterList l =
+      let (inL, outL, locL) = foldl f ([], [], []) l
+       in (inL, NonEmpty.fromList outL, locL)
+
+    buildCtx (inL, outL, locL) = NodeContext inL outL locL
+
+    f (inL, outL, locL) (Input, v) = (inL <> [v], outL, locL)
+    f (inL, outL, locL) (Output, v) = (inL, outL <> [v], locL)
+    f (inL, outL, locL) (Local, v) = (inL, outL, locL <> [v])
 
 -- # End Section
 
 -- # Section ExprEnv Monad
 
-newtype ExprEnv a = ExprEnv {runExprEnv' :: NodeState -> VarMapping -> a}
+newtype ExprEnv a = ExprEnv (ReaderT (NodeState, VarMapping) TypeUnifier a)
+  deriving (Functor, Applicative, Monad)
 
-instance Functor ExprEnv where
-  fmap :: (a -> b) -> ExprEnv a -> ExprEnv b
-  fmap f m = ExprEnv $ \ns vs -> f $ runExprEnv' m ns vs
+instance (Semigroup a) => Semigroup (ExprEnv a) where
+  (<>) :: ExprEnv a -> ExprEnv a -> ExprEnv a
+  (<>) = liftA2 (<>)
 
-instance Applicative ExprEnv where
-  pure :: a -> ExprEnv a
-  pure x = ExprEnv $ \_ _ -> x
-
-  (<*>) :: ExprEnv (a -> b) -> ExprEnv a -> ExprEnv b
-  m1 <*> m2 = ExprEnv $ \ns vs -> runExprEnv' m1 ns vs $ runExprEnv' m2 ns vs
-
-instance Monad ExprEnv where
-  (>>=) :: ExprEnv a -> (a -> ExprEnv b) -> ExprEnv b
-  m >>= f = ExprEnv $ \ns vs -> runExprEnv' (f $ runExprEnv' m ns vs) ns vs
+instance IsString (ExprEnv String) where
+  fromString :: String -> ExprEnv String
+  fromString = pure
 
 findNode :: Localized Ident -> ExprEnv (CanFail (Localized NodeIdent, NodeSignature))
-findNode nodeName = ExprEnv $ \ns _ ->
-  maybe (reportError nodeName $ UnknownNode nodeIdent) nodeFound $ Map.lookup nodeId ns
+findNode nodeName = ExprEnv $ asks (findNode' . fst)
   where
     locNodeId = NodeIdent <$> nodeName
-    nodeIdent = unwrap nodeName
-    nodeId = unwrap locNodeId
+    findNode' ns =
+      case Map.lookup (unwrap locNodeId) ns of
+        Just sig -> (locNodeId,) <$> sig
+        Nothing ->
+          let Ident s = unwrap nodeName
+           in reportError nodeName $ "Unknown node " <> unpack s <> "."
 
-    nodeFound Nothing = hasFailed -- Node declared but error in the type declaration
-    nodeFound (Just sig) = pure (locNodeId, sig)
-
-findVariable :: Localized Ident -> ExprEnv (CanFail (Localized VarIdent, AtomicType))
-findVariable varName =
-  ExprEnv $ \_ vs ->
-    maybe (reportError varName $ UnknownVariable varIdent) varFound $ Map.lookup varId vs
+findVariable :: Localized Ident -> ExprEnv (CanFail (Localized VarIdent, AtomicTType))
+findVariable varName = ExprEnv $ asks (findVariable' . snd)
   where
     locVarId = VarIdent <$> varName
-    varIdent = unwrap varName
-    varId = unwrap locVarId
+    findVariable' vs =
+      case Map.lookup (unwrap locVarId) vs of
+        Just sig -> (locVarId,) <$> sig
+        Nothing ->
+          let Ident s = unwrap varName
+           in reportError varName $ "Unknown variable " <> unpack s <> "."
 
-    varFound Nothing = hasFailed -- Variable declared but error in the type declaration
-    varFound (Just typ) = pure (locVarId, typ)
+constantTypeCand :: Constant -> ExprEnv TypeCand
+constantTypeCand c = ExprEnv . lift $ Unif.constantTypeCand c
 
-evalIn :: NodeVarEnv () -> ExprEnv a -> NodeEnv (CanFail NodeContext, a)
-evalIn env expr = NodeEnv $ \ns -> ((buildCtx <$> vList varEnv, runExprEnv' expr ns (vMap varEnv)), ns, mempty)
+tupleTypeCand :: BiList TypeCand -> ExprEnv TypeCand
+tupleTypeCand l = ExprEnv . lift $ Unif.tupleTypeCand l
+
+fromAtomicType :: AtomicTType -> ExprEnv TypeCand
+fromAtomicType atom = ExprEnv . lift $ Unif.fromAtomicType atom
+
+nodeOutputTypeCand :: NodeSignature -> ExprEnv TypeCand
+nodeOutputTypeCand sig = ExprEnv . lift $ Unif.nodeOutputTypeCand sig
+
+unifyTypeCand :: ErrorReporter -> TypeCand -> TypeCand -> ExprEnv (CanFail TypeCand)
+unifyTypeCand err t1 t2 = ExprEnv . lift $ Unif.unifyTypeCand err t1 t2
+
+unifyWithTType :: ErrorReporter -> TType -> TypeCand -> ExprEnv (CanFail TypeCand)
+unifyWithTType err typ typeCand = ExprEnv . lift $ Unif.unifyWithTType err typ typeCand
+
+checkExpected :: ErrorReporter -> ExpectedAtom -> TypeCand -> ExprEnv (CanFail TypeCand)
+checkExpected err ttyp t = ExprEnv . lift $ Unif.checkExpected err ttyp t
+
+typeCheckIn :: NodeEnvironment -> ExprEnv (CanFail (TEquation TypeCand)) -> NodeEnv (CanFail (TEquation TType))
+typeCheckIn (NodeEnvironment {vMapping}) (ExprEnv expr) = NodeEnv . state $ \ns -> (runExpr ns, ns)
   where
-    varEnv = snd $ runNodeVarEnv' env NodeVarState {vList = pure [], vMap = Map.empty}
-    varMap = Map.mapMaybe id $ vMap varEnv -- Invariant : When no error is in vList, varMap has no Nothing
-    buildCtx l =
-      let (inL, outL, locL) = foldl f ([], [], []) l
-       in NodeContext inL (NonEmpty.fromList outL) locL varMap
+    runExpr :: NodeState -> CanFail (TEquation TType)
+    runExpr ns =
+      let m = runReaderT expr (ns, vMapping)
+          (tEq, f) = Unif.runTypeUnifier m
+       in collapse $ traverseEq f <$> tEq
 
-    f (inL, outL, locL) (Input, v) = (inL <> [v], outL, locL)
-    f (inL, outL, locL) (Output, v) = (inL, outL <> [v], locL)
-    f (inL, outL, locL) (Local, v) = (inL, outL, locL <> [v])
+    traverseEq :: (Localized TypeCand -> CanFail TType) -> TEquation TypeCand -> CanFail (TEquation TType)
+    traverseEq f (pat, e) = (pat,) <$> traverseExpr f e
+
+    traverseExpr :: (Localized TypeCand -> CanFail TType) -> TExpr TypeCand -> CanFail (TExpr TType)
+    traverseExpr f loc@(L _ (e, t) _) = (loc $>) <$> ((,) <$> traverseExprDesc f e <*> f (loc $> t))
+
+    traverseExprDesc :: (Localized TypeCand -> CanFail TType) -> TExprDesc TypeCand -> CanFail (TExprDesc TType)
+    traverseExprDesc _ (ConstantTExpr c) = pure $ ConstantTExpr c
+    traverseExprDesc _ (VarTExpr v) = pure $ VarTExpr v
+    traverseExprDesc f (UnOpTExpr op e) = UnOpTExpr op <$> traverseExpr f e
+    traverseExprDesc f (BinOpTExpr op lhs rhs) = BinOpTExpr op <$> traverseExpr f lhs <*> traverseExpr f rhs
+    traverseExprDesc f (AppTExpr nn args) = AppTExpr nn <$> traverse (traverseExpr f) args
+    traverseExprDesc f (TupleTExpr l) = TupleTExpr <$> traverse (traverseExpr f) l
+    traverseExprDesc f (IfTExpr {ifCond, ifTrue, ifFalse}) =
+      IfTExpr <$> traverseExpr f ifCond <*> traverseExpr f ifTrue <*> traverseExpr f ifFalse
+    traverseExprDesc f (FbyTExpr {fbyInit, fbyNext}) =
+      FbyTExpr <$> traverseExpr f fbyInit <*> traverseExpr f fbyNext
 
 -- # End Section
