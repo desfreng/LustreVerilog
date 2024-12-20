@@ -1,6 +1,12 @@
-module Parsing.Ast (module Commons.AstTypes, module Parsing.Ast) where
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE InstanceSigs #-}
 
-import Commons.AstTypes
+module Parsing.Ast where
+
+import Commons.Ast
+import Commons.BiList
+import Commons.Localized
+import Commons.Tree
 import Data.List.NonEmpty
 
 data LustreType
@@ -21,8 +27,7 @@ data ExprDesc
   | FbyExpr {fbyInit :: Expr, fbyNext :: Expr}
   deriving (Show, Eq)
 
-data Pattern = PatIdent (Localized Ident) | PatTuple (BiList Pattern)
-  deriving (Show, Eq)
+type Pattern = Tree (Localized Ident)
 
 data Equation = Equation Pattern Expr
   deriving (Show, Eq)
@@ -39,5 +44,5 @@ data Node = Node
   }
   deriving (Show, Eq)
 
-newtype Ast = Ast [Localized Node]
+newtype Ast = Ast [Node]
   deriving (Show, Eq)

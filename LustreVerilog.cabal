@@ -28,17 +28,25 @@ common warnings
 library
     import:           warnings
     exposed-modules:
-        Parsing.Parser,
-        Typing.TypeChecker
+        LustreVerilog
 
     -- Modules included in this library but not exported.
     other-modules:
-        Commons.AstTypes,
+        Commons.Ast,
+        Commons.BiList,
+        Commons.Localized,
+        Commons.Tree,
+        Commons.Types,
+        Commons.TypingError,
+        Normalisation.Ast,
+        Normalisation.Normalise,
         Parsing.Ast,
+        Parsing.Parser,
         Typing.Ast,
-        Typing.TypeError,
+        Typing.AtomicUnifier,
         Typing.Environments,
-        Typing.Ids,
+        Typing.MonadUnif,
+        Typing.TypeChecker,
         Typing.Unification
 
     other-extensions: Safe
@@ -69,7 +77,6 @@ executable LustreVerilog
         base ^>= 4.17.2.1,
         text ^>= 2.1.2,
         bytestring ^>= 0.11.5.3,
-        megaparsec ^>= 9.6.1,
         pretty-simple ^>= 4.1.2.0,
         optparse-applicative ^>= 0.18.1.0,
         LustreVerilog

@@ -1,8 +1,8 @@
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE RankNTypes #-}
 
-module Typing.TypeError
-  ( TypeError (),
+module Commons.TypingError
+  ( TypingError (),
     CanFail (),
     ErrorReporter,
     reportError,
@@ -14,8 +14,8 @@ module Typing.TypeError
   )
 where
 
-import Commons.AstTypes
-import Control.Applicative
+import Commons.Localized (Localized (..))
+import Control.Applicative (Applicative (liftA2))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Set (Set)
 import qualified Data.Set as S
@@ -23,7 +23,7 @@ import Data.Text.Lazy (Text)
 import Text.Megaparsec.Error
 import Text.Megaparsec.State (initialPosState)
 
-data Err = Err Int TypeError
+data Err = Err Int TypingError
   deriving (Eq, Ord)
 
 data CanFail a = Ok a | Error (Set Err)
@@ -75,21 +75,21 @@ embed (Error l) = pure $ Error l
 collapseA :: (Applicative f) => CanFail (f (CanFail a)) -> f (CanFail a)
 collapseA = fmap collapse . embed
 
-data TypeError = TypeError String Int
+data TypingError = TypingError !String !Int
   deriving (Eq, Ord)
 
 type ErrorReporter = forall a. String -> CanFail a
 
 {-# INLINEABLE reportError #-}
 reportError :: Localized b -> ErrorReporter
-reportError (L pos _ end) err = Error . S.singleton . Err pos $ TypeError err (end - pos)
+reportError (L pos _ end) err = Error . S.singleton . Err pos $ TypingError err (end - pos)
 
 {-# INLINEABLE addError #-}
 addError :: CanFail b -> Localized c -> ErrorReporter
 addError (Ok _) pos err = reportError pos err
-addError (Error s) (L pos _ end) err = Error $ S.insert (Err pos (TypeError err (end - pos))) s
+addError (Error s) (L pos _ end) err = Error $ S.insert (Err pos (TypingError err (end - pos))) s
 
-runCanFail :: FilePath -> Text -> CanFail a -> Either (ParseErrorBundle Text TypeError) a
+runCanFail :: FilePath -> Text -> CanFail a -> Either (ParseErrorBundle Text TypingError) a
 runCanFail fileName input (Error s) = Left $ ParseErrorBundle errList (initialPosState fileName input)
   where
     errList = case S.toList s of
@@ -98,9 +98,9 @@ runCanFail fileName input (Error s) = Left $ ParseErrorBundle errList (initialPo
     toError (Err pos desc) = FancyError pos . S.singleton . ErrorCustom $ desc
 runCanFail _ _ (Ok x) = Right x
 
-instance ShowErrorComponent TypeError where
-  showErrorComponent :: TypeError -> String
-  showErrorComponent (TypeError t _) = t
+instance ShowErrorComponent TypingError where
+  showErrorComponent :: TypingError -> String
+  showErrorComponent (TypingError t _) = t
 
-  errorComponentLen :: TypeError -> Int
-  errorComponentLen (TypeError _ l) = l
+  errorComponentLen :: TypingError -> Int
+  errorComponentLen (TypingError _ l) = l

@@ -1,87 +1,57 @@
-module Typing.Ast (module Typing.Ast, module Commons.AstTypes, VarIdent, NodeIdent) where
+module Typing.Ast where
 
-import Commons.AstTypes
+import Commons.Ast
+import Commons.BiList
+import Commons.Localized
+import Commons.Tree
+import Commons.Types
 import Data.List.NonEmpty (NonEmpty)
 import Data.Map.Strict (Map)
-import Typing.Ids (NodeIdent (), VarIdent ())
-
--- | Atomic type (for instance of a variable)
-data AtomicTType
-  = -- | The Boolean Type
-    TBool
-  | -- | The BitVector Type
-    TBitVector BitVectorKind BVSize
-  deriving (Show, Eq, Ord)
-
--- | Type of an Expression
-data TType
-  = -- | An Atomic Type (Not a Tuple)
-    TAtom AtomicTType
-  | -- | A Composed Type, containing multiple types
-    TTuple (BiList TType)
-  deriving (Show, Eq, Ord)
 
 -- | A Typed Expression in a Lustre Program
-type TExpr typ = Localized (TExprDesc typ, typ)
+type TExpr typ atyp = Localized (TExprKind typ atyp)
 
 -- | The Description of what is an Expression
-data TExprDesc typ
+data TExprKind typ atyp
   = -- | A Constant Expression: @10@ or @false@
-    ConstantTExpr Constant
+    ConstantTExpr Constant atyp
   | -- | A Variable Expression
-    VarTExpr (Localized VarIdent)
+    VarTExpr VarIdent atyp
   | -- | A Unary Expression: @not e@ or @-e@
-    UnOpTExpr UnOp (TExpr typ)
+    UnOpTExpr UnOp (TExpr typ atyp) atyp
   | -- | A Binary Expression: @a + b@, @a <> b@, @a and b@, ...
-    BinOpTExpr BinOp (TExpr typ) (TExpr typ)
+    BinOpTExpr BinOp (TExpr typ atyp) (TExpr typ atyp) atyp
   | -- | Call to another Node
-    AppTExpr (Localized NodeIdent) [TExpr typ]
+    AppTExpr NodeIdent [TExpr typ atyp] typ
   | -- | A Tuple of Expression: @(a, b, c)@
-    TupleTExpr (BiList (TExpr typ))
+    TupleTExpr (BiList (TExpr typ atyp)) typ
   | -- | Conditional Expression: @if c then a else b@
-    IfTExpr {ifCond :: TExpr typ, ifTrue :: TExpr typ, ifFalse :: TExpr typ}
+    IfTExpr {ifCond :: TExpr typ atyp, ifTrue :: TExpr typ atyp, ifFalse :: TExpr typ atyp, ifTyp :: typ}
   | -- | Initialized Delay Expression: @0 fby e@
-    FbyTExpr {fbyInit :: TExpr typ, fbyNext :: TExpr typ}
+    FbyTExpr {fbyInit :: TExpr typ atyp, fbyNext :: TExpr typ atyp, fbyTyp :: typ}
   deriving (Show)
-
-exprType :: TExpr typ -> typ
-exprType = snd . unwrap
 
 -- | Left hand-side of a Lustre Equation
-data TPattern
-  = -- | An Atomic Pattern, define a single variable
-    TPatAtomic (Localized VarIdent)
-  | -- | A Composed Pattern, define multiples variables
-    TPatTuple (BiList TPattern)
-  deriving (Show)
+type TPattern = Tree VarIdent
 
 -- | A Lustre Equation, variables of a Pattern are defined with a Lustre Expression
-type TEquation typ = (TPattern, TExpr typ)
+type TEquation typ atyp = (TPattern, TExpr typ atyp)
+
+type TNodeEq = TEquation TType AtomicTType
 
 -- | A Typed Lustre Node
-data TNode = TNode NodeContext [TEquation TType]
+data TNode = TNode {tnodeCtx :: TNodeContext, tnodeEqs :: [TNodeEq]}
   deriving (Show)
 
-data NodeContext = NodeContext
+data TNodeContext = TNodeContext
   { -- | List of the Input Variables of a Node
-    tnodeInput :: [Localized VarIdent],
+    tnodeInput :: [VarIdent],
     -- | List of the Output Variables of a Node
-    tnodeOutput :: NonEmpty (Localized VarIdent),
+    tnodeOutput :: NonEmpty VarIdent,
     -- | List of the Local Variables of a Node
-    tnodeLocal :: [Localized VarIdent],
+    tnodeLocal :: [VarIdent],
     -- | Mapping from the Node's variables to their Types
     tnodeVarTypes :: Map VarIdent AtomicTType
-  }
-  deriving (Show)
-
--- | The Type Signature of a Lustre Node
-data NodeSignature = NodeSignature
-  { -- | Arity of the Node
-    nodeArity :: Int,
-    -- | List of the type of the Input Variables of a Node
-    inputTypes :: [AtomicTType],
-    -- | Output Type of a Node
-    outputType :: TType
   }
   deriving (Show)
 
@@ -90,6 +60,6 @@ data TAst = TAst
   { -- | Mapping from nodes of the Lustre Program to their input and output Types
     tastNodeDecl :: Map NodeIdent NodeSignature,
     -- | List of the Node of the Lustre Program
-    tastNodes :: [(NodeIdent, Localized TNode)]
+    tastNodes :: [(NodeIdent, TNode)]
   }
   deriving (Show)

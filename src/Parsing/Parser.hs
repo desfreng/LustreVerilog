@@ -1,31 +1,21 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
-module Parsing.Parser
-  ( Parser,
-    Localized (..),
-    pFile,
-    pNode,
-    pDecl,
-    pEquation,
-    pExpr,
-    pPattern,
-    pType,
-    pConstant,
-    spaceConsumer,
-    module Parsing.Ast,
-  )
-where
+module Parsing.Parser (Parser, pFile) where
 
-import Control.Monad
-import Control.Monad.Combinators.Expr
+import Commons.Ast
+import Commons.BiList
+import Commons.Localized
+import Commons.Tree
+import Control.Monad (join, void)
+import Control.Monad.Combinators.Expr (Operator (..), makeExprParser)
 import qualified Control.Monad.Combinators.NonEmpty as Comb (sepBy1)
 import Data.Char (isAsciiLower, isAsciiUpper, isDigit)
-import Data.Functor
+import Data.Functor (($>))
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NEmpty
 import qualified Data.Set as Set
-import Data.String
+import Data.String (IsString)
 import Data.Text.Lazy (Text, cons)
 import Data.Void (Void)
 import Parsing.Ast
@@ -163,10 +153,10 @@ pConstant =
 pPattern :: Parser Pattern
 pPattern = pPatIdent <|> pPatTuple
   where
-    pPatIdent = PatIdent <$> pIdent <?> "pattern"
+    pPatIdent = TreeLeaf <$> pIdent <?> "pattern"
     pPatTuple = buildPatTuple <$> pLocalized (parens $ Comb.sepBy1 pPattern comma)
     buildPatTuple (L _ (e :| []) _) = e
-    buildPatTuple (L _ (x :| (y : l)) _) = PatTuple (BiList x y l)
+    buildPatTuple (L _ (x :| (y : l)) _) = TreeNode (BiList x y l)
 
 pConstantExpr :: Parser Expr
 pConstantExpr = fmap ConstantExpr <$> pConstant
@@ -248,22 +238,21 @@ pDecl = buildDecls <$> Comb.sepBy1 pIdent comma <*> (colon *> pType)
   where
     buildDecls l t = flip IdentDecl t <$> l
 
-pNode :: Parser (Localized Node)
+pNode :: Parser Node
 pNode =
-  pNode'
-    <$> keyword NODE
-    <*> pIdent
-    <*> (pInputDecl <* keyword RETURNS)
-    <*> (pOutputDecl <* semicolon)
-    <*> pLocals
-    <*> someTill_ pEquation (keyword TEL)
+  keyword NODE
+    >> Node
+      <$> pIdent
+      <*> (pInputDecl <* keyword RETURNS)
+      <*> (pOutputDecl <* semicolon)
+      <*> pLocals
+      <*> someTill pEquation (keyword TEL)
   where
     pInputDecl = concat <$> parens (sepBy pDeclList semicolon)
     pOutputDecl = join <$> parens (Comb.sepBy1 pDecl semicolon)
     pLocals = (concat <$> pLocalsList) <|> keyword LET $> []
     pLocalsList = keyword VAR *> someTill (pDeclList <* semicolon) (keyword LET)
     pDeclList = NEmpty.toList <$> pDecl
-    pNode' beg nodeName nodeInputs nodeOutputs nodeLocals (nodeEqs, end) = merge beg end $ Node {..}
 
 pFile :: Parser Ast
 pFile = Ast <$> many pNode <* eof

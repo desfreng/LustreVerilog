@@ -32,3 +32,8 @@ cabal-dev/
 .hpc/
 *.p_hi
 *.tix
+
+# -- Verilog
+.stamp.verilate
+*.vcd
+obj_dir/
