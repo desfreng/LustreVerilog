@@ -46,7 +46,7 @@ import Commons.Localized
 import Commons.Tree
 import Commons.Types
 import Commons.TypingError
-import Control.Applicative
+import Control.Applicative (Applicative (..))
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Control.Monad.Writer

@@ -28,7 +28,7 @@ where
 import Commons.Ast (BVSize (..), BitVectorKind (..), Constant (..))
 import Commons.Types (AtomicTType (..), ppAtomicType)
 import Commons.TypingError (CanFail, ErrorReporter, embed)
-import Control.Applicative (Applicative (liftA2))
+import Control.Applicative (Applicative (..))
 import Control.Monad (zipWithM)
 import Control.Monad.Reader (Reader, runReader)
 import Control.Monad.State.Strict (MonadState (state), State, StateT (StateT), runState)

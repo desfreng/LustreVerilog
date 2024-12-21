@@ -15,7 +15,7 @@ module Commons.TypingError
 where
 
 import Commons.Localized (Localized (..))
-import Control.Applicative (Applicative (liftA2))
+import Control.Applicative (Applicative (..))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Set (Set)
 import qualified Data.Set as S

@@ -38,7 +38,7 @@ import qualified Commons.BiList as BiList
 import Commons.Tree (Tree (TreeLeaf, TreeNode))
 import Commons.Types (AtomicTType, NodeSignature (outputType), TType, ppTType)
 import Commons.TypingError (CanFail, ErrorReporter, embed)
-import Control.Applicative (Applicative (liftA2))
+import Control.Applicative (Applicative (..))
 import Control.Monad.Reader (MonadTrans (lift), Reader, runReader)
 import Control.Monad.State (MonadState (state), StateT (..))
 import Data.Foldable (Foldable (toList))

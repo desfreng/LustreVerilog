@@ -19,21 +19,22 @@ concurrency:
 
 jobs:
   build:
-    name: GHC 9.12 on ${{ matrix.os }}
+    name: GHC ${{ matrix.ghc-version }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        ghc-version: ['9.12', '9.10', '9.8', '9.6', '9.4', '9.2', '9.0']
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up GHC 9.12
+      - name: Set up GHC ${{ matrix.ghc-version }}
         uses: haskell-actions/setup@v2
         id: setup
         with:
-          ghc-version: 9.12
+          ghc-version: ${{ matrix.ghc-version }}
           cabal-version: 'latest'
           cabal-update: true
 
