@@ -2,14 +2,13 @@ module Typing.Ast where
 
 import Commons.Ast
 import Commons.BiList
-import Commons.Localized
+import Commons.Ids
+import Commons.Position
 import Commons.Tree
 import Commons.Types
-import Data.List.NonEmpty (NonEmpty)
-import Data.Map.Strict (Map)
 
 -- | A Typed Expression in a Lustre Program
-type TExpr typ atyp = Localized (TExprKind typ atyp)
+type TExpr typ atyp = Pos (TExprKind typ atyp)
 
 -- | The Description of what is an Expression
 data TExprKind typ atyp
@@ -21,12 +20,12 @@ data TExprKind typ atyp
     UnOpTExpr UnOp (TExpr typ atyp) atyp
   | -- | A Binary Expression: @a + b@, @a <> b@, @a and b@, ...
     BinOpTExpr BinOp (TExpr typ atyp) (TExpr typ atyp) atyp
+  | -- | Conditional Expression: @if c then a else b@
+    IfTExpr (TExpr typ atyp) (TExpr typ atyp) (TExpr typ atyp) typ
   | -- | Call to another Node
     AppTExpr NodeIdent [TExpr typ atyp] typ
   | -- | A Tuple of Expression: @(a, b, c)@
     TupleTExpr (BiList (TExpr typ atyp)) typ
-  | -- | Conditional Expression: @if c then a else b@
-    IfTExpr {ifCond :: TExpr typ atyp, ifTrue :: TExpr typ atyp, ifFalse :: TExpr typ atyp, ifTyp :: typ}
   | -- | Initialized Delay Expression: @0 fby e@
     FbyTExpr {fbyInit :: TExpr typ atyp, fbyNext :: TExpr typ atyp, fbyTyp :: typ}
   deriving (Show)
@@ -39,27 +38,6 @@ type TEquation typ atyp = (TPattern, TExpr typ atyp)
 
 type TNodeEq = TEquation TType AtomicTType
 
--- | A Typed Lustre Node
-data TNode = TNode {tnodeCtx :: TNodeContext, tnodeEqs :: [TNodeEq]}
-  deriving (Show)
+type TNode = Node VarIdent TNodeEq
 
-data TNodeContext = TNodeContext
-  { -- | List of the Input Variables of a Node
-    tnodeInput :: [VarIdent],
-    -- | List of the Output Variables of a Node
-    tnodeOutput :: NonEmpty VarIdent,
-    -- | List of the Local Variables of a Node
-    tnodeLocal :: [VarIdent],
-    -- | Mapping from the Node's variables to their Types
-    tnodeVarTypes :: Map VarIdent AtomicTType
-  }
-  deriving (Show)
-
--- | A Typed Lustre Program
-data TAst = TAst
-  { -- | Mapping from nodes of the Lustre Program to their input and output Types
-    tastNodeDecl :: Map NodeIdent NodeSignature,
-    -- | List of the Node of the Lustre Program
-    tastNodes :: [(NodeIdent, TNode)]
-  }
-  deriving (Show)
+type TAst = Ast TNode

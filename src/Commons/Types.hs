@@ -1,9 +1,17 @@
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+
 module Commons.Types where
 
-import Commons.Ast (BVSize (..), BitVectorKind (..))
-import Commons.Tree
-import Data.Foldable (Foldable (toList))
-import Data.List (intercalate)
+import Commons.Ids (TypeIdent)
+import Commons.Tree (Tree (..))
+
+newtype BVSize = BVSize Int
+  deriving (Show, Eq, Ord)
+
+data BitVectorKind = Raw | Unsigned | Signed
+  deriving (Show, Eq, Ord)
 
 -- | Atomic type (for instance of a variable)
 data AtomicTType
@@ -12,10 +20,11 @@ data AtomicTType
   | -- | The BitVector Type
     TBitVector BitVectorKind BVSize
   | -- | The BitVector Type
-    TCustom () [AtomicTType]
+    TCustom TypeIdent [AtomicTType]
   deriving (Eq, Ord)
 
 instance Show AtomicTType where
+  show :: AtomicTType -> String
   show TBool = "bool"
   show (TBitVector Raw (BVSize s)) = "r" <> show s
   show (TBitVector Unsigned (BVSize s)) = "u" <> show s
@@ -26,21 +35,3 @@ instance Show AtomicTType where
 
 -- | Type of an Expression
 type TType = Tree AtomicTType
-
-ppTType :: TType -> String
-ppTType (TreeNode l) = "(" <> intercalate ", " (toList $ ppTType <$> l) <> ")"
-ppTType (TreeLeaf atom) = show atom
-
-ppAtomicType :: AtomicTType -> String
-ppAtomicType = show
-
--- | The Type Signature of a Lustre Node
-data NodeSignature = NodeSignature
-  { -- | Arity of the Node
-    nodeArity :: Int,
-    -- | List of the type of the Input Variables of a Node
-    inputTypes :: [AtomicTType],
-    -- | Output Type of a Node
-    outputType :: TType
-  }
-  deriving (Show)

@@ -5,11 +5,13 @@ module Parsing.Parser (Parser, pFile) where
 
 import Commons.Ast
 import Commons.BiList
-import Commons.Localized
+import Commons.Ids
+import Commons.Position
 import Commons.Tree
+import Commons.Types
 import Control.Monad (join, void)
 import Control.Monad.Combinators.Expr (Operator (..), makeExprParser)
-import qualified Control.Monad.Combinators.NonEmpty as Comb (sepBy1)
+import qualified Control.Monad.Combinators.NonEmpty as Comb (sepBy1, someTill)
 import Data.Char (isAsciiLower, isAsciiUpper, isDigit)
 import Data.Functor (($>))
 import Data.List.NonEmpty (NonEmpty (..))
@@ -19,7 +21,7 @@ import Data.String (IsString)
 import Data.Text.Lazy (Text, cons)
 import Data.Void (Void)
 import Parsing.Ast
-import Text.Megaparsec
+import Text.Megaparsec hiding (Pos)
 import Text.Megaparsec.Char (char, space1, string)
 import qualified Text.Megaparsec.Char.Lexer as L
 
@@ -65,14 +67,14 @@ kwToString TEL = "tel"
 isKeyword :: (Eq a, IsString a) => a -> Bool
 isKeyword t = t `elem` (kwToString <$> [minBound .. maxBound])
 
-merge :: Localized a -> Localized b -> c -> Localized c
+merge :: Pos a -> Pos b -> c -> Pos c
 merge (L beg _ _) (L _ _ end) c = L beg c end
 
 spaceConsumer :: Parser ()
 spaceConsumer = L.space space1 empty (L.skipBlockComment "/*" "*/")
 
-pLocalized :: Parser a -> Parser (Localized a)
-pLocalized p = L <$> (spaceConsumer *> getOffset) <*> p <*> (getOffset <* spaceConsumer)
+pLoc :: Parser a -> Parser (Pos a)
+pLoc p = L <$> (spaceConsumer *> getOffset) <*> p <*> (getOffset <* spaceConsumer)
 
 symbol :: Text -> Parser ()
 symbol s = void $ spaceConsumer *> string s <* spaceConsumer
@@ -92,8 +94,8 @@ colon = symbol ":"
 isAlphaNum :: Char -> Bool
 isAlphaNum x = isAsciiLower x || isAsciiUpper x || isDigit x || x == '_'
 
-pIdent :: Parser (Localized Ident)
-pIdent = pLocalized pIdent' <?> "identifier"
+pIdent :: Parser (Pos Ident)
+pIdent = pLoc pIdent' <?> "identifier"
   where
     pIdent' = do
       o <- getOffset
@@ -107,13 +109,13 @@ pIdent = pLocalized pIdent' <?> "identifier"
             else
               return (Ident t)
 
-keyword :: Keyword -> Parser (Localized Text)
-keyword k = pLocalized pKeyword <?> "keyword"
+keyword :: Keyword -> Parser (Pos Text)
+keyword k = pLoc pKeyword <?> "keyword"
   where
     pKeyword = string (kwToString k) <* notFollowedBy (satisfy isAlphaNum)
 
-pInteger :: Parser (Localized Integer)
-pInteger = pLocalized pInteger'
+pInteger :: Parser (Pos Integer)
+pInteger = pLoc pInteger'
   where
     pInteger' = pBeginZero <|> L.decimal <?> "integer"
     pBeginZero = char '0' >> choice [pHexa, pOct, pBin, pDec, L.decimal, pZero]
@@ -123,19 +125,19 @@ pInteger = pLocalized pInteger'
     pDec = char 'd' >> L.decimal
     pZero = return 0
 
-pBool :: Parser (Localized Bool)
+pBool :: Parser (Pos Bool)
 pBool = pTrue <|> pFalse
   where
     pTrue = fmap (const True) <$> keyword TRUE
     pFalse = fmap (const False) <$> keyword FALSE
 
-pType :: Parser (Localized LustreType)
+pType :: Parser (Pos LustreType)
 pType =
   choice
     [ fmap (const BoolType) <$> keyword BOOL,
-      pLocalized pRaw,
-      pLocalized pUnsig,
-      try (pLocalized pSig),
+      pLoc pRaw,
+      pLoc pUnsig,
+      try (pLoc pSig),
       fmap (const (BitVectorType Signed (BVSize 32))) <$> keyword INT
     ]
   where
@@ -143,7 +145,7 @@ pType =
     pUnsig = char 'u' >> BitVectorType Unsigned . BVSize <$> L.decimal
     pSig = char 'i' >> BitVectorType Signed . BVSize <$> L.decimal
 
-pConstant :: Parser (Localized Constant)
+pConstant :: Parser (Pos Constant)
 pConstant =
   choice
     [ fmap IntegerConst <$> pInteger,
@@ -154,7 +156,7 @@ pPattern :: Parser Pattern
 pPattern = pPatIdent <|> pPatTuple
   where
     pPatIdent = TreeLeaf <$> pIdent <?> "pattern"
-    pPatTuple = buildPatTuple <$> pLocalized (parens $ Comb.sepBy1 pPattern comma)
+    pPatTuple = buildPatTuple <$> pLoc (parens $ Comb.sepBy1 pPattern comma)
     buildPatTuple (L _ (e :| []) _) = e
     buildPatTuple (L _ (x :| (y : l)) _) = TreeNode (BiList x y l)
 
@@ -168,13 +170,13 @@ pIdentExpr = buildIdentExpr <$> pIdent
 
 pParensExprs :: Parser Expr
 pParensExprs =
-  buildExpr <$> pLocalized (parens $ Comb.sepBy1 pExpr comma)
+  buildExpr <$> pLoc (parens $ Comb.sepBy1 pExpr comma)
   where
     buildExpr (L _ (e :| []) _) = e
     buildExpr loc@(L _ (x :| (y : l)) _) = loc $> TupleExpr (BiList x y l)
 
 pAppExpr :: Parser Expr
-pAppExpr = pLocalized pAppExpr'
+pAppExpr = pLoc pAppExpr'
   where
     pAppExpr' = try $ AppExpr <$> pIdent <*> parens (sepBy pExpr comma)
 
@@ -238,15 +240,15 @@ pDecl = buildDecls <$> Comb.sepBy1 pIdent comma <*> (colon *> pType)
   where
     buildDecls l t = flip IdentDecl t <$> l
 
-pNode :: Parser Node
+pNode :: Parser PNode
 pNode =
   keyword NODE
-    >> Node
+    >> PNode
       <$> pIdent
       <*> (pInputDecl <* keyword RETURNS)
       <*> (pOutputDecl <* semicolon)
       <*> pLocals
-      <*> someTill pEquation (keyword TEL)
+      <*> Comb.someTill pEquation (keyword TEL)
   where
     pInputDecl = concat <$> parens (sepBy pDeclList semicolon)
     pOutputDecl = join <$> parens (Comb.sepBy1 pDecl semicolon)
@@ -254,5 +256,5 @@ pNode =
     pLocalsList = keyword VAR *> someTill (pDeclList <* semicolon) (keyword LET)
     pDeclList = NEmpty.toList <$> pDecl
 
-pFile :: Parser Ast
-pFile = Ast <$> many pNode <* eof
+pFile :: Parser PAst
+pFile = PAst <$> many pNode <* eof

@@ -2,7 +2,7 @@
 
 module Commons.BiList (BiList (..), zipWith, zipWithM, unzip) where
 
-import qualified Control.Monad as Monad
+import Control.Monad.Identity (Identity (runIdentity))
 import Data.Foldable (Foldable (toList))
 import qualified Data.List as List
 import Prelude hiding (unzip, zipWith)
@@ -39,8 +39,19 @@ unzip (BiList (x1, x2) (y1, y2) l) =
   let (l1, l2) = List.unzip l
    in (BiList x1 y1 l1, BiList x2 y2 l2)
 
-zipWith :: (a -> b -> c) -> BiList a -> BiList b -> BiList c
-zipWith f (BiList x1 y1 l1) (BiList x2 y2 l2) = BiList (f x1 x2) (f y1 y2) (List.zipWith f l1 l2)
+listZipWithM :: (Applicative f) => (a -> b -> f (Maybe c)) -> [a] -> [b] -> f (Maybe [c])
+listZipWithM _ [] [] = pure $ Just []
+listZipWithM f (x : l) (x' : l') = liftA2 (:) <$> f x x' <*> listZipWithM f l l'
+listZipWithM _ [] (_ : _) = pure Nothing
+listZipWithM _ (_ : _) [] = pure Nothing
 
-zipWithM :: (Applicative f) => (a -> b -> f c) -> BiList a -> BiList b -> f (BiList c)
-zipWithM f (BiList x1 y1 l1) (BiList x2 y2 l2) = BiList <$> f x1 x2 <*> f y1 y2 <*> Monad.zipWithM f l1 l2
+zipWith :: (a -> b -> Maybe c) -> BiList a -> BiList b -> Maybe (BiList c)
+zipWith f b1 b2 = runIdentity $ zipWithM f' b1 b2
+  where
+    {-# INLINEABLE f' #-}
+    f' x y = pure $ f x y
+
+zipWithM :: (Applicative f) => (a -> b -> f (Maybe c)) -> BiList a -> BiList b -> f (Maybe (BiList c))
+zipWithM f (BiList x1 y1 l1) (BiList x2 y2 l2) = buildBiList <$> f x1 x2 <*> f y1 y2 <*> listZipWithM f l1 l2
+  where
+    buildBiList x y l = BiList <$> x <*> y <*> l

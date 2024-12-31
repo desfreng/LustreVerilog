@@ -14,8 +14,7 @@ module Commons.TypingError
   )
 where
 
-import Commons.Localized (Localized (..))
-import Control.Applicative (Applicative (..))
+import Commons.Position (Pos (..))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Set (Set)
 import qualified Data.Set as S
@@ -81,11 +80,11 @@ data TypingError = TypingError !String !Int
 type ErrorReporter = forall a. String -> CanFail a
 
 {-# INLINEABLE reportError #-}
-reportError :: Localized b -> ErrorReporter
+reportError :: Pos b -> ErrorReporter
 reportError (L pos _ end) err = Error . S.singleton . Err pos $ TypingError err (end - pos)
 
 {-# INLINEABLE addError #-}
-addError :: CanFail b -> Localized c -> ErrorReporter
+addError :: CanFail b -> Pos c -> ErrorReporter
 addError (Ok _) pos err = reportError pos err
 addError (Error s) (L pos _ end) err = Error $ S.insert (Err pos (TypingError err (end - pos))) s
 

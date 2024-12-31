@@ -1,12 +1,15 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE TypeSynonymInstances #-}
 
 module Parsing.Ast where
 
 import Commons.Ast
 import Commons.BiList
-import Commons.Localized
+import Commons.Ids
+import Commons.Position
 import Commons.Tree
+import Commons.Types
 import Data.List.NonEmpty
 
 data LustreType
@@ -14,35 +17,35 @@ data LustreType
   | BitVectorType BitVectorKind BVSize
   deriving (Show, Eq, Ord)
 
-type Expr = Localized ExprDesc
+type Expr = Pos ExprDesc
 
 data ExprDesc
   = ConstantExpr Constant
-  | IdentExpr (Localized Ident)
+  | IdentExpr (Pos Ident)
   | UnOpExpr UnOp Expr
   | BinOpExpr BinOp Expr Expr
-  | AppExpr (Localized Ident) [Expr]
+  | AppExpr (Pos Ident) [Expr]
   | TupleExpr (BiList Expr)
   | IfExpr {ifCond :: Expr, ifTrue :: Expr, ifFalse :: Expr}
   | FbyExpr {fbyInit :: Expr, fbyNext :: Expr}
   deriving (Show, Eq)
 
-type Pattern = Tree (Localized Ident)
+type Pattern = Tree (Pos Ident)
 
 data Equation = Equation Pattern Expr
   deriving (Show, Eq)
 
-data IdentDecl = IdentDecl (Localized Ident) (Localized LustreType)
+data IdentDecl = IdentDecl (Pos Ident) (Pos LustreType)
   deriving (Show, Eq)
 
-data Node = Node
-  { nodeName :: Localized Ident,
+data PNode = PNode
+  { nodeName :: Pos Ident,
     nodeInputs :: [IdentDecl],
     nodeOutputs :: NonEmpty IdentDecl,
     nodeLocals :: [IdentDecl],
-    nodeEqs :: [Equation]
+    nodeEqs :: (NonEmpty Equation)
   }
   deriving (Show, Eq)
 
-newtype Ast = Ast [Node]
+newtype PAst = PAst [PNode]
   deriving (Show, Eq)

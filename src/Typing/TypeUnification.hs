@@ -2,17 +2,23 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 
-module Typing.AtomicUnifier
+module Typing.TypeUnification
   ( -- TypeUnifier Monad
     AtomicUnifier (),
     runAtomicUnifier,
+    unifyAtomicWithTType,
+    unify,
+    unifyTypeCand,
     unifyWithTType,
-    -- Sanitization
-    AtomicState (),
-    sanitizeAtom,
+    -- TypeCand
+    TypeCand (),
+    asTC,
+    tupleTypeCand,
+    nodeOutputTypeCand,
     -- AtomicCand
     AtomicCand (),
     constantTypeCand,
@@ -22,14 +28,21 @@ module Typing.AtomicUnifier
     expectBitVector,
     expectBool,
     checkExpected,
+    -- Sanitization
+    AtomicState (),
+    sanitizeAtom,
+    sanitize,
   )
 where
 
-import Commons.Ast (BVSize (..), BitVectorKind (..), Constant (..))
-import Commons.Types (AtomicTType (..), ppAtomicType)
+import Commons.Ast (Constant (..), NodeSignature (..))
+import Commons.BiList (BiList)
+import Commons.Ids (TypeIdent)
+import Commons.Tree (Tree (..), showA)
+import qualified Commons.Tree as Tree
+import Commons.Types (AtomicTType (..), BVSize (..), BitVectorKind (..), TType)
 import Commons.TypingError (CanFail, ErrorReporter, embed)
-import Control.Applicative (Applicative (..))
-import Control.Monad (zipWithM)
+import qualified Control.Monad as Monad
 import Control.Monad.Reader (Reader, runReader)
 import Control.Monad.State.Strict (MonadState (state), State, StateT (StateT), runState)
 import Data.Bifunctor (Bifunctor (second))
@@ -53,11 +66,10 @@ data AtomKind
   = BitVector BitVectorKind BVSize
   | Numeric (NonEmpty BitVectorKind) UnsignedSize SignedSize
   | Bool
-  | Custom () [AtomicCand]
-  deriving (Show)
+  | Custom TypeIdent [AtomicCand]
 
 newtype AtomicCand = AtomicCand Int
-  deriving (Show, Eq, Ord, Enum)
+  deriving (Eq, Ord, Enum)
 
 data ExpectedKind = BoolExp | UnsizedBitVector BitVectorKind
   deriving (Eq)
@@ -173,7 +185,7 @@ instance MonadUnif AtomicCand AtomKind AtomicUnifier where
 
       unifyCustom tId1 tId2 args1 args2 =
         if tId1 == tId2
-          then fmap (Custom tId1) . sequenceA <$> zipWithM (unify err) args1 args2
+          then fmap (Custom tId1) . sequenceA <$> Monad.zipWithM (unify err) args1 args2
           else reportErr
 
 filterKind :: NonEmpty BitVectorKind -> [BitVectorKind] -> Maybe (NonEmpty BitVectorKind)
@@ -184,16 +196,16 @@ isSizeCompatible size Raw (UnSig minSize) _ = size >= minSize
 isSizeCompatible size Unsigned (UnSig minSize) _ = size >= minSize
 isSizeCompatible size Signed _ (Sig minSize) = size >= minSize
 
-unifyWithTType :: ErrorReporter -> AtomicTType -> AtomicCand -> AtomicUnifier (CanFail AtomicCand)
-unifyWithTType err typ t = do
+unifyAtomicWithTType :: ErrorReporter -> AtomicTType -> AtomicCand -> AtomicUnifier (CanFail AtomicCand)
+unifyAtomicWithTType err typ t = do
   v <- unfoldVal t
   case v of
     Nothing -> fromAtomicType typ >>= (t ~>)
-    Just k -> unifyWithTType' t typ k >>= embed . fmap (setVal t)
+    Just k -> unifyAtomicWithTType' t typ k >>= embed . fmap (setVal t)
   where
-    reportErr r = err <$> "Cannot unify atomic type " <> showId r <> " with " <> pure (ppAtomicType typ) <> "."
+    reportErr r = err <$> "Cannot unify atomic type " <> showId r <> " with " <> pure (show typ) <> "."
 
-    unifyWithTType' r ty k =
+    unifyAtomicWithTType' r ty k =
       case (ty, k) of
         -- TBool
         (TBool, Bool) -> return $ pure Bool
@@ -223,31 +235,8 @@ unifyWithTType err typ t = do
 
     unifyCustom r tId1 args1 tId2 args2 =
       if tId1 == tId2
-        then fmap (Custom tId1) . sequenceA <$> zipWithM (unifyWithTType err) args1 args2
+        then fmap (Custom tId1) . sequenceA <$> Monad.zipWithM (unifyAtomicWithTType err) args1 args2
         else reportErr r
-
-checkExpected :: ErrorReporter -> ExpectedAtom -> AtomicCand -> AtomicUnifier (CanFail AtomicCand)
-checkExpected err expAtom@(ExpectedAtom l) t = do
-  v <- unfoldVal t
-  case v of
-    Nothing -> err <$> "Type variable " <> showId t <> " is not " <> pure (show expAtom) <> "."
-    Just k ->
-      case checkAtom k of
-        Nothing -> err <$> "Unable to unify " <> showId t <> " with " <> pure (show expAtom) <> "."
-        Just k' -> pure <$> setVal t k'
-  where
-    checkAtom v@Bool = find (== BoolExp) l $> v
-    checkAtom v@(BitVector kind size) = find (isCompatibleBitVector kind size) l $> v
-    checkAtom (Numeric nK uS sS) =
-      let buildNumeric u s k = Numeric k u s
-       in buildNumeric uS sS <$> filterKind nK (mapMaybe getBitVectorKind (NonEmpty.toList l))
-    checkAtom (Custom {}) = Nothing
-
-    isCompatibleBitVector _ _ BoolExp = False
-    isCompatibleBitVector kind _ (UnsizedBitVector expKind) = kind == expKind
-
-    getBitVectorKind BoolExp = Nothing
-    getBitVectorKind (UnsizedBitVector k) = Just k
 
 buildAndBind :: AtomKind -> AtomicUnifier AtomicCand
 buildAndBind v = do
@@ -297,3 +286,62 @@ sanitizeAtom err st x = runReader (go x) st
     sanitizeAtom' (BitVector kind size) = return $ pure (TBitVector kind size)
     sanitizeAtom' (Numeric {}) = return $ err "Unable to find the bit-vector size of this expression."
     sanitizeAtom' (Custom tId args) = fmap (TCustom tId) . sequenceA <$> mapM go args
+
+type TypeCand = Tree AtomicCand
+
+asTC :: AtomicCand -> AtomicUnifier TypeCand
+asTC = return . TreeLeaf
+
+tupleTypeCand :: BiList TypeCand -> AtomicUnifier TypeCand
+tupleTypeCand = return . TreeNode
+
+nodeOutputTypeCand :: NodeSignature -> AtomicUnifier TypeCand
+nodeOutputTypeCand NodeSignature {outputType} = mapM fromAtomicType outputType
+
+unifyTypeCand :: ErrorReporter -> TypeCand -> TypeCand -> AtomicUnifier (CanFail TypeCand)
+unifyTypeCand err t1 t2 = Tree.zipWithM unifyAtom t1 t2 >>= buildTC
+  where
+    unifyAtom aT1 aT2 = pure <$> unify err aT1 aT2
+
+    buildTC Nothing =
+      err <$> "Cannot unify types " <> showA showId t1 <> " and " <> showA showId t1 <> "."
+    buildTC (Just x) = return $ sequenceA x
+
+unifyWithTType :: ErrorReporter -> TType -> TypeCand -> AtomicUnifier (CanFail TypeCand)
+unifyWithTType err typ typeCand = Tree.zipWithM unifyAtom typ typeCand >>= buildTC
+  where
+    unifyAtom aT1 aT2 = pure <$> unifyAtomicWithTType err aT1 aT2
+
+    buildTC Nothing =
+      err <$> "Cannot unify types " <> showA showId typeCand <> " and " <> pure (show typ) <> "."
+    buildTC (Just x) = return $ sequenceA x
+
+sanitize :: ErrorReporter -> AtomicState -> TypeCand -> CanFail TType
+sanitize err s t = traverse (sanitizeAtom err s) t
+
+checkExpected :: ErrorReporter -> ExpectedAtom -> TypeCand -> AtomicUnifier (CanFail AtomicCand)
+checkExpected err _ (TreeNode _) = err <$> ""
+checkExpected err expAtom@(ExpectedAtom l) (TreeLeaf a) = checkExpected' a
+  where
+    checkExpected' :: AtomicCand -> AtomicUnifier (CanFail AtomicCand)
+    checkExpected' x = do
+      v <- unfoldVal x
+      case v of
+        Nothing -> err <$> "Type variable " <> showId x <> " is not " <> pure (show expAtom) <> "."
+        Just k ->
+          case checkAtom k of
+            Nothing -> err <$> "Unable to unify " <> showId x <> " with " <> pure (show expAtom) <> "."
+            Just k' -> pure <$> setVal x k'
+
+    checkAtom v@Bool = find (== BoolExp) l $> v
+    checkAtom v@(BitVector kind size) = find (isCompatibleBitVector kind size) l $> v
+    checkAtom (Numeric nK uS sS) =
+      let buildNumeric u s k = Numeric k u s
+       in buildNumeric uS sS <$> filterKind nK (mapMaybe getBitVectorKind (NonEmpty.toList l))
+    checkAtom (Custom {}) = Nothing
+
+    isCompatibleBitVector _ _ BoolExp = False
+    isCompatibleBitVector kind _ (UnsizedBitVector expKind) = kind == expKind
+
+    getBitVectorKind BoolExp = Nothing
+    getBitVectorKind (UnsizedBitVector k) = Just k

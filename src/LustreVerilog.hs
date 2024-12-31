@@ -4,7 +4,7 @@ module LustreVerilog
     ParseErrorBundle (),
     LustreVerilog.errorBundlePretty,
     -- Parsing
-    Ast (),
+    PAst (),
     parseFile,
     -- Typing
     TypingError (),
@@ -16,7 +16,7 @@ where
 import Commons.TypingError (TypingError, runCanFail)
 import Data.Text.Lazy (Text)
 import Data.Void (Void)
-import Parsing.Ast (Ast)
+import Parsing.Ast (PAst)
 import Parsing.Parser (pFile)
 import Text.Megaparsec (ParseErrorBundle, ShowErrorComponent, parse)
 import qualified Text.Megaparsec.Error as MegaparsecError
@@ -26,8 +26,8 @@ import Typing.TypeChecker (typeAst)
 errorBundlePretty :: (ShowErrorComponent e) => ParseErrorBundle Text e -> String
 errorBundlePretty = MegaparsecError.errorBundlePretty
 
-parseFile :: FilePath -> Text -> Either (ParseErrorBundle Text Void) Ast
+parseFile :: FilePath -> Text -> Either (ParseErrorBundle Text Void) PAst
 parseFile = parse pFile
 
-typeFile :: FilePath -> Text -> Ast -> Either (ParseErrorBundle Text TypingError) TAst
+typeFile :: FilePath -> Text -> PAst -> Either (ParseErrorBundle Text TypingError) TAst
 typeFile file textData ast = runCanFail file textData (typeAst ast)

@@ -7,7 +7,8 @@ module Typing.TypeChecker (typeAst) where
 import Commons.Ast
 import Commons.BiList (BiList)
 import qualified Commons.BiList as BiList
-import Commons.Localized
+import Commons.Ids
+import Commons.Position
 import Commons.Tree (Tree (TreeLeaf, TreeNode))
 import Commons.Types
 import Commons.TypingError
@@ -16,13 +17,12 @@ import Data.Bifunctor
 import Data.Functor
 import Parsing.Ast
 import Typing.Ast
-import Typing.AtomicUnifier (AtomicCand)
 import Typing.Environments
 
-typeAst :: Ast -> CanFail TAst
-typeAst (Ast l) = runNodeEnv $ mapM_ typeNode l
+typeAst :: PAst -> CanFail TAst
+typeAst (PAst l) = runNodeEnv $ mapM_ typeNode l
 
-typeNode :: Node -> NodeEnv ()
+typeNode :: PNode -> NodeEnv ()
 typeNode node = do
   nodeEnv <- runNodeVarEnv typeVarDecls
   tEqs <- sequenceA <$> mapM (typeCheckIn nodeEnv . typeEq) (nodeEqs node)
@@ -33,10 +33,10 @@ typeNode node = do
       mapM_ (typeDecl addOutputVariable) (nodeOutputs node)
       mapM_ (typeDecl addLocalVariable) (nodeLocals node)
 
-typeDecl :: (Localized Ident -> CanFail AtomicTType -> NodeVarEnv ()) -> IdentDecl -> NodeVarEnv ()
+typeDecl :: (Pos Ident -> CanFail AtomicTType -> NodeVarEnv ()) -> IdentDecl -> NodeVarEnv ()
 typeDecl f (IdentDecl declIdent declType) = typeType declType >>= f declIdent
 
-typeType :: Localized LustreType -> NodeVarEnv (CanFail AtomicTType)
+typeType :: Pos LustreType -> NodeVarEnv (CanFail AtomicTType)
 typeType t = typeType' $ unwrap t
   where
     typeType' BoolType = return . pure $ TBool
@@ -93,7 +93,7 @@ unifyExprs err e1 e2 = do
 typeConstantExpr :: ErrorReporter -> Maybe TType -> Constant -> ExprEnv (CanFail ExprKindCand)
 typeConstantExpr err mtyp cst = constantTypeCand cst >>= buildAndUnify err mtyp . ConstantTExpr cst
 
-typeIdentExpr :: ErrorReporter -> Maybe TType -> Localized Ident -> ExprEnv (CanFail ExprKindCand)
+typeIdentExpr :: ErrorReporter -> Maybe TType -> Pos Ident -> ExprEnv (CanFail ExprKindCand)
 typeIdentExpr err mtyp var = findVariable var >>= collapseA . fmap buildIdent
   where
     buildIdent (varId, varTyp) = fromAtomicType varTyp >>= buildAndUnify err mtyp . VarTExpr varId
@@ -154,8 +154,18 @@ typeBinOpExpr err mtyp op lhs rhs =
       unifyAtomicCand err lhsTyp rhsTyp
         >>= collapseA . fmap (buildAndUnify err mtyp . BinOpTExpr op tLhs tRhs)
 
+typeIfExpr :: ErrorReporter -> Maybe TType -> Expr -> Expr -> Expr -> ExprEnv (CanFail ExprKindCand)
+typeIfExpr err mtyp cond tb fb = do
+  tCond <- expectAtom expectBool cond
+  tTb <- findExprType tb
+  tFb <- findExprType fb
+  typ <- collapseA $ unifyExprs err <$> tTb <*> tFb
+  collapseA $ buildIfExpr <$> tCond <*> tTb <*> tFb <*> typ
+  where
+    buildIfExpr (tCond, _) tTb tFb = buildAndUnify err mtyp . IfTExpr tCond tTb tFb
+
 typeAppExpr ::
-  ErrorReporter -> Maybe TType -> Localized Ident -> [Expr] -> ExprEnv (CanFail ExprKindCand)
+  ErrorReporter -> Maybe TType -> Pos Ident -> [Expr] -> ExprEnv (CanFail ExprKindCand)
 typeAppExpr err mtyp node args = findNode node >>= collapseA . fmap typeAppExpr'
   where
     typeAppExpr' (nodeId, nodeSig) =
@@ -189,16 +199,6 @@ typeTupleExpr err mtyp args = mapM findExprType args >>= collapseA . fmap buildT
   where
     buildTupleExpr tArgs =
       mapM (exprType . unwrap) tArgs >>= tupleTypeCand >>= buildAndUnify err mtyp . TupleTExpr tArgs
-
-typeIfExpr :: ErrorReporter -> Maybe TType -> Expr -> Expr -> Expr -> ExprEnv (CanFail ExprKindCand)
-typeIfExpr err mtyp cond tb fb = do
-  tCond <- expectAtom expectBool cond
-  tTb <- findExprType tb
-  tFb <- findExprType fb
-  typ <- collapseA $ unifyExprs err <$> tTb <*> tFb
-  collapseA $ buildIfExpr <$> tCond <*> tTb <*> tFb <*> typ
-  where
-    buildIfExpr (tCond, _) tTb tFb = buildAndUnify err mtyp . IfTExpr tCond tTb tFb
 
 typeFbyExpr :: ErrorReporter -> Maybe TType -> Expr -> Expr -> ExprEnv (CanFail ExprKindCand)
 typeFbyExpr err mtyp initE nextE = do

@@ -21,12 +21,12 @@ main = do
     readArgs [] = ("stdin",) . decodeUtf8 <$> B.getContents
     readArgs (f : _) = (f,) . decodeUtf8 <$> B.readFile f
 
-parseInput :: FilePath -> Text -> IO Ast
+parseInput :: FilePath -> Text -> IO PAst
 parseInput path txt = case parseFile path txt of
   Left err -> putStrLn (errorBundlePretty err) >> exitWith (ExitFailure 2)
   Right ast -> return ast
 
-typeInput :: FilePath -> Text -> Ast -> IO TAst
+typeInput :: FilePath -> Text -> PAst -> IO TAst
 typeInput path txt ast = case typeFile path txt ast of
   Left err -> putStrLn (errorBundlePretty err) >> exitWith (ExitFailure 3)
   Right tast -> return tast

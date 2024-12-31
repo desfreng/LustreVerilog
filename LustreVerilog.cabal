@@ -34,20 +34,18 @@ library
     other-modules:
         Commons.Ast,
         Commons.BiList,
-        Commons.Localized,
+        Commons.Ids,
+        Commons.Position,
         Commons.Tree,
         Commons.Types,
         Commons.TypingError,
-        Normalisation.Ast,
-        Normalisation.Normalise,
         Parsing.Ast,
         Parsing.Parser,
         Typing.Ast,
-        Typing.AtomicUnifier,
         Typing.Environments,
         Typing.MonadUnif,
         Typing.TypeChecker,
-        Typing.Unification
+        Typing.TypeUnification
 
     other-extensions: Safe
 
