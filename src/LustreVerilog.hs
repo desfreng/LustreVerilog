@@ -21,7 +21,7 @@ import Parsing.Parser (pFile)
 import Text.Megaparsec (ParseErrorBundle, ShowErrorComponent, parse)
 import qualified Text.Megaparsec.Error as MegaparsecError
 import Typing.Ast (TAst)
-import Typing.TypeChecker (typeAst)
+import Typing.TypeNode (typeAst)
 
 errorBundlePretty :: (ShowErrorComponent e) => ParseErrorBundle Text e -> String
 errorBundlePretty = MegaparsecError.errorBundlePretty

@@ -1,10 +1,8 @@
 {-# LANGUAGE InstanceSigs #-}
-{-# LANGUAGE RankNTypes #-}
 
 module Commons.TypingError
   ( TypingError (),
     CanFail (),
-    ErrorReporter,
     reportError,
     addError,
     runCanFail,
@@ -16,8 +14,8 @@ where
 
 import Commons.Position (Pos (..))
 import Data.List.NonEmpty (NonEmpty (..))
-import Data.Set (Set)
-import qualified Data.Set as S
+import qualified Data.List.NonEmpty as NonEmpty
+import qualified Data.Set as Set
 import Data.Text.Lazy (Text)
 import Text.Megaparsec.Error
 import Text.Megaparsec.State (initialPosState)
@@ -25,7 +23,7 @@ import Text.Megaparsec.State (initialPosState)
 data Err = Err Int TypingError
   deriving (Eq, Ord)
 
-data CanFail a = Ok a | Error (Set Err)
+data CanFail a = Ok a | Error (NonEmpty Err)
 
 instance Functor CanFail where
   {-# INLINEABLE fmap #-}
@@ -77,24 +75,20 @@ collapseA = fmap collapse . embed
 data TypingError = TypingError !String !Int
   deriving (Eq, Ord)
 
-type ErrorReporter = forall a. String -> CanFail a
-
 {-# INLINEABLE reportError #-}
-reportError :: Pos b -> ErrorReporter
-reportError (L pos _ end) err = Error . S.singleton . Err pos $ TypingError err (end - pos)
+reportError :: Pos b -> String -> CanFail a
+reportError (L pos _ end) err = Error . NonEmpty.singleton . Err pos $ TypingError err (end - pos)
 
 {-# INLINEABLE addError #-}
-addError :: CanFail b -> Pos c -> ErrorReporter
+addError :: CanFail b -> Pos c -> String -> CanFail a
 addError (Ok _) pos err = reportError pos err
-addError (Error s) (L pos _ end) err = Error $ S.insert (Err pos (TypingError err (end - pos))) s
+addError (Error s) (L pos _ end) err = Error $ NonEmpty.cons (Err pos (TypingError err (end - pos))) s
 
 runCanFail :: FilePath -> Text -> CanFail a -> Either (ParseErrorBundle Text TypingError) a
 runCanFail fileName input (Error s) = Left $ ParseErrorBundle errList (initialPosState fileName input)
   where
-    errList = case S.toList s of
-      [] -> error "Failure Without Error"
-      x : l -> toError <$> x :| l
-    toError (Err pos desc) = FancyError pos . S.singleton . ErrorCustom $ desc
+    errList = toError <$> NonEmpty.nub s
+    toError (Err pos desc) = FancyError pos . Set.singleton . ErrorCustom $ desc
 runCanFail _ _ (Ok x) = Right x
 
 instance ShowErrorComponent TypingError where

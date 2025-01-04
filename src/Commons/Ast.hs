@@ -2,10 +2,11 @@
 
 module Commons.Ast where
 
-import Commons.Ids
-import Commons.Types
+import Commons.Ids (NodeIdent, VarIdent)
+import Commons.Types (AtomicTType)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Map (Map)
+import Data.Set (Set)
 
 data Constant = BoolConst Bool | IntegerConst Integer
   deriving (Show, Eq)
@@ -33,24 +34,24 @@ data NodeSignature = NodeSignature
     -- | List of the type of the Input Variables of a Node
     inputTypes :: [AtomicTType],
     -- | Output Type of a Node
-    outputType :: TType
+    outputType :: NonEmpty AtomicTType
   }
   deriving (Show)
 
-data NodeContext typ = TNodeContext
+data NodeContext var = NodeContext
   { -- | List of the Input Variables of a Node
-    nodeInput :: [typ],
+    nodeInput :: [VarIdent],
     -- | List of the Output Variables of a Node
-    nodeOutput :: NonEmpty typ,
-    -- | List of the Local Variables of a Node
-    nodeLocal :: [typ],
+    nodeOutput :: NonEmpty VarIdent,
+    -- | Set of the Local Variables of a Node
+    nodeLocal :: Set var,
     -- | Mapping from the Node's variables to their Types
-    nodeVarTypes :: Map typ AtomicTType
+    nodeVarTypes :: Map var AtomicTType
   }
   deriving (Show)
 
 -- | A Lustre Node
-data Node typ eq = Node (NodeContext typ) (NonEmpty eq)
+data Node var eq = Node (NodeContext var) (NonEmpty eq)
   deriving (Show)
 
 -- | A Typed Lustre Program

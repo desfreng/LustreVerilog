@@ -23,7 +23,7 @@ source-repository head
   location: https://github.com/desfreng/LustreVerilog/
 
 common warnings
-    ghc-options: -Wall -Wextra
+    ghc-options: -Wall -Wextra -g
 
 library
     import:           warnings
@@ -42,9 +42,14 @@ library
         Parsing.Ast,
         Parsing.Parser,
         Typing.Ast,
+        Typing.CheckAtomicExpr,
         Typing.Environments,
+        Typing.ExprEnv,
         Typing.MonadUnif,
-        Typing.TypeChecker,
+        Typing.NodeEnv,
+        Typing.NodeVarEnv,
+        Typing.TypeExpr,
+        Typing.TypeNode,
         Typing.TypeUnification
 
     other-extensions: Safe

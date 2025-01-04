@@ -5,8 +5,10 @@ module Commons.Tree where
 
 import Commons.BiList (BiList (..))
 import qualified Commons.BiList as BiList
+import Control.Monad (join)
 import Control.Monad.Identity (Identity (runIdentity))
 import Data.Foldable (toList)
+import Data.Foldable1
 import Data.List (intercalate)
 import Prelude hiding (zipWith)
 
@@ -39,18 +41,24 @@ instance Foldable Tree where
   foldMap f (TreeLeaf x) = f x
   foldMap f (TreeNode l) = foldMap (foldMap f) l
 
+instance Foldable1 Tree where
+  foldMap1 :: (Semigroup m) => (a -> m) -> Tree a -> m
+  foldMap1 f (TreeLeaf x) = f x
+  foldMap1 f (TreeNode l) = foldMap1 (foldMap1 f) l
+
 instance Traversable Tree where
   traverse :: (Applicative f) => (a -> f b) -> Tree a -> f (Tree b)
   traverse f (TreeLeaf x) = TreeLeaf <$> f x
   traverse f (TreeNode l) = TreeNode <$> traverse (traverse f) l
 
-zipWith :: (a -> b -> Maybe c) -> Tree a -> Tree b -> Maybe (Tree c)
+zipWith :: (a -> b -> c) -> Tree a -> Tree b -> Maybe (Tree c)
 zipWith f t1 t2 = runIdentity $ zipWithM f' t1 t2
   where
     {-# INLINEABLE f' #-}
     f' a b = pure $ f a b
 
-zipWithM :: (Applicative f) => (a -> b -> f (Maybe c)) -> Tree a -> Tree b -> f (Maybe (Tree c))
-zipWithM f (TreeLeaf a) (TreeLeaf b) = fmap TreeLeaf <$> f a b
-zipWithM f (TreeNode l1) (TreeNode l2) = fmap TreeNode <$> BiList.zipWithM (zipWithM f) l1 l2
+zipWithM :: (Applicative f) => (a -> b -> f c) -> Tree a -> Tree b -> f (Maybe (Tree c))
+zipWithM f (TreeLeaf a) (TreeLeaf b) = pure <$> TreeLeaf <$> f a b
+zipWithM f (TreeNode l1) (TreeNode l2) =
+  fmap TreeNode . join . (fmap sequenceA) <$> (BiList.zipWithM (zipWithM f) l1 l2)
 zipWithM _ _ _ = pure $ Nothing

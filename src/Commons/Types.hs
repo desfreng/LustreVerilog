@@ -5,7 +5,6 @@
 module Commons.Types where
 
 import Commons.Ids (TypeIdent)
-import Commons.Tree (Tree (..))
 
 newtype BVSize = BVSize Int
   deriving (Show, Eq, Ord)
@@ -32,6 +31,3 @@ instance Show AtomicTType where
   show (TCustom x args) =
     let strArgs = (\t -> "(" <> show t <> ")") <$> args
      in "custom " <> show x <> " " <> unwords strArgs
-
--- | Type of an Expression
-type TType = Tree AtomicTType

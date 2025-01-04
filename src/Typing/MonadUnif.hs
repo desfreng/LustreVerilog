@@ -5,13 +5,15 @@
 
 module Typing.MonadUnif
   ( UnifState (),
+    ConvertibleToInt (..),
     MonadAssocReader (val),
     MonadUnif (unifyCand, subVars, idName, showId, setVal, setRepr, unfoldVal, unify, (~>)),
     emptyState,
   )
 where
 
-import Commons.TypingError (CanFail, ErrorReporter, collapseA)
+import Commons.Position (Pos)
+import Commons.TypingError (CanFail, collapseA, reportError)
 import Control.Monad.Reader (MonadReader, asks)
 import Control.Monad.State.Strict (MonadState (state), gets)
 import Data.IntMap (IntMap)
@@ -24,21 +26,25 @@ orM :: (Monad m) => m Bool -> m Bool -> m Bool
 orM m1 m2 = m1 >>= \x -> if x then return True else m2
 
 newtype UnifState id cand = UnifState {idEquiv :: IntMap (Either id cand)}
+  deriving (Show)
 
 emptyState :: UnifState id cand
 emptyState = UnifState IMap.empty
 
-class (Eq id, Enum id, MonadReader (UnifState id cand) m) => MonadAssocReader id cand m | id -> cand, id -> where
+class ConvertibleToInt a where
+  toInt :: a -> Int
+
+class (Eq id, ConvertibleToInt id, MonadReader (UnifState id cand) m) => MonadAssocReader id cand m | id -> cand, id -> m where
   val :: id -> m (Maybe cand)
   val x = do
-    binding <- asks (IMap.lookup (fromEnum x) . idEquiv)
+    binding <- asks (IMap.lookup (toInt x) . idEquiv)
     case binding of
       Nothing -> return Nothing
       Just (Right v) -> return $ Just v
       Just (Left t) -> val t
 
-class (Eq id, Enum id, MonadState (UnifState id cand) m) => MonadUnif id cand m | id -> cand, id -> m where
-  unifyCand :: ErrorReporter -> (id, cand) -> (id, cand) -> m (CanFail cand)
+class (Eq id, ConvertibleToInt id, MonadState (UnifState id cand) m) => MonadUnif id cand m | id -> cand, id -> m where
+  unifyCand :: Pos a -> (id, cand) -> (id, cand) -> m (CanFail cand)
   subVars :: cand -> [id]
   idName :: m String
   showId :: id -> m String
@@ -48,15 +54,15 @@ class (Eq id, Enum id, MonadState (UnifState id cand) m) => MonadUnif id cand m 
     rx <- getRepr x
     if rx == r
       then return r -- Invariant, no self equivalence in varEquiv !
-      else state $ \(UnifState s) -> (r, UnifState (IMap.insert (fromEnum rx) (Left r) s))
+      else state $ \(UnifState s) -> (r, UnifState (IMap.insert (toInt rx) (Left r) s))
 
   setVal :: id -> cand -> m id
   setVal x v = do
     r <- getRepr x
-    state $ \(UnifState s) -> (r, UnifState (IMap.insert (fromEnum r) (Right v) s))
+    state $ \(UnifState s) -> (r, UnifState (IMap.insert (toInt r) (Right v) s))
 
   getBinding :: id -> m (Maybe (Either id cand))
-  getBinding x = gets (IMap.lookup (fromEnum x) . idEquiv)
+  getBinding x = gets (IMap.lookup (toInt x) . idEquiv)
 
   getRepr :: id -> m id
   getRepr x = do
@@ -80,8 +86,8 @@ class (Eq id, Enum id, MonadState (UnifState id cand) m) => MonadUnif id cand m 
   (~>) :: id -> id -> m (CanFail id)
   x ~> r = pure <$> setRepr x r
 
-  unify :: ErrorReporter -> id -> id -> m (CanFail id)
-  unify err x1 x2 = do
+  unify :: Pos a -> id -> id -> m (CanFail id)
+  unify loc x1 x2 = do
     r1 <- getRepr x1
     r2 <- getRepr x2
     s1 <- getVal r1
@@ -92,7 +98,7 @@ class (Eq id, Enum id, MonadState (UnifState id cand) m) => MonadUnif id cand m 
         (Nothing, Nothing) -> r2 ~> r1
         (Just _, Nothing) -> r2 ~&> r1
         (Nothing, Just _) -> r1 ~&> r2
-        (Just t1, Just t2) -> unifyCand err (r1, t1) (r2, t2) >>= collapseA . fmap (\v -> setVal r1 v >> r2 ~> r1)
+        (Just t1, Just t2) -> unifyCand loc (r1, t1) (r2, t2) >>= collapseA . fmap (\v -> setVal r1 v >> r2 ~> r1)
     where
       (~&>) x r = do
         xInR <- occurs x r
@@ -101,7 +107,7 @@ class (Eq id, Enum id, MonadState (UnifState id cand) m) => MonadUnif id cand m 
             n <- idName
             ppX <- showId x
             ppR <- showId r
-            return $ err $ "The " <> n <> " variable " <> ppX <> " appears in the " <> n <> " " <> ppR <> "."
+            return $ reportError loc $ "The " <> n <> " variable " <> ppX <> " appears in the " <> n <> " " <> ppR <> "."
           else x ~> r
 
       occurs v y = do

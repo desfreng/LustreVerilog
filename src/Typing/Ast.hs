@@ -1,43 +1,46 @@
 module Typing.Ast where
 
-import Commons.Ast
-import Commons.BiList
-import Commons.Ids
-import Commons.Position
-import Commons.Tree
-import Commons.Types
+import Commons.Ast (Ast, BinOp, Constant, Node, UnOp)
+import Commons.Ids (NodeIdent, VarId)
+import Commons.Position (Pos)
+import Commons.Types (AtomicTType)
+import Data.List.NonEmpty (NonEmpty)
 
 -- | A Typed Expression in a Lustre Program
-type TExpr typ atyp = Pos (TExprKind typ atyp)
+type TExpr atyp = Pos (TExprKind atyp)
 
 -- | The Description of what is an Expression
-data TExprKind typ atyp
+data TExprKind atyp
   = -- | A Constant Expression: @10@ or @false@
     ConstantTExpr Constant atyp
   | -- | A Variable Expression
-    VarTExpr VarIdent atyp
+    VarTExpr VarId atyp
   | -- | A Unary Expression: @not e@ or @-e@
-    UnOpTExpr UnOp (TExpr typ atyp) atyp
+    UnOpTExpr UnOp (TExpr atyp) atyp
   | -- | A Binary Expression: @a + b@, @a <> b@, @a and b@, ...
-    BinOpTExpr BinOp (TExpr typ atyp) (TExpr typ atyp) atyp
+    BinOpTExpr BinOp (TExpr atyp) (TExpr atyp) atyp
   | -- | Conditional Expression: @if c then a else b@
-    IfTExpr (TExpr typ atyp) (TExpr typ atyp) (TExpr typ atyp) typ
-  | -- | Call to another Node
-    AppTExpr NodeIdent [TExpr typ atyp] typ
-  | -- | A Tuple of Expression: @(a, b, c)@
-    TupleTExpr (BiList (TExpr typ atyp)) typ
-  | -- | Initialized Delay Expression: @0 fby e@
-    FbyTExpr {fbyInit :: TExpr typ atyp, fbyNext :: TExpr typ atyp, fbyTyp :: typ}
+    IfTExpr {ifCond :: VarId, ifTrue :: (TExpr atyp), ifFalse :: (TExpr atyp), ifTyp :: atyp}
   deriving (Show)
 
--- | Left hand-side of a Lustre Equation
-type TPattern = Tree VarIdent
+exprType :: TExprKind atyp -> atyp
+exprType (ConstantTExpr _ t) = t
+exprType (VarTExpr _ t) = t
+exprType (UnOpTExpr _ _ t) = t
+exprType (BinOpTExpr _ _ _ t) = t
+exprType (IfTExpr _ _ _ t) = t
 
--- | A Lustre Equation, variables of a Pattern are defined with a Lustre Expression
-type TEquation typ atyp = (TPattern, TExpr typ atyp)
+data TEquation atyp
+  = -- | The simplest equation possible: @x = e@
+    SimpleEq VarId (TExpr atyp)
+  | -- | A delayed expression: @x = init -> next@
+    FbyEq VarId (TExpr atyp) (TExpr atyp)
+  | -- | A call to another node : @(x, ..., z) = f(a, ..., b)@
+    CallEq (NonEmpty VarId) NodeIdent [TExpr atyp]
+  deriving (Show)
 
-type TNodeEq = TEquation TType AtomicTType
+type TNodeEq = TEquation AtomicTType
 
-type TNode = Node VarIdent TNodeEq
+type TNode = Node VarId TNodeEq
 
 type TAst = Ast TNode
