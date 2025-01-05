@@ -37,16 +37,16 @@ data VarId
   = -- | Refers to the variable in argument
     FromIdent VarIdent
   | -- | Refers to a variable that have been added during the normalisation of an expression
-    VarFbyDefinition Int
+    VarFbyDefinition VarIdent Int
+  | -- | Refers to a variable that have been added during the normalisation of an if-expression
+    VarIfCondition VarIdent Int
   | -- | Refers to a variable that have been added during the normalisation of an node call
     OutputCallVar NodeIdent Int
-  | -- | Refers to a variable that have been added during the normalisation of an if-expression
-    VarIfCondition Int
   deriving (Eq, Ord)
 
 instance Show VarId where
   show :: VarId -> String
   show (FromIdent vId) = show vId
-  show (VarFbyDefinition vId) = "fby_" <> show vId
+  show (VarFbyDefinition vName vId) = show vName <> "_fby_" <> show vId
+  show (VarIfCondition vName vId) = show vName <> "_cond_" <> show vId
   show (OutputCallVar nId vId) = "out_" <> show nId <> "_" <> show vId
-  show (VarIfCondition vId) = "if_cond_" <> show vId

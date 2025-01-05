@@ -1,4 +1,4 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE TupleSections #-}
 
 module Typing.NodeVarEnv
@@ -28,7 +28,23 @@ data VarKind = Input | Output | Local
 data NodeVarState = NodeVarState {varList :: CanFail [(VarKind, VarIdent)], varMap :: VarMapping}
 
 newtype NodeVarEnv a = NodeVarEnv (State NodeVarState a)
-  deriving (Functor, Applicative, Monad)
+
+instance Functor NodeVarEnv where
+  fmap :: (a -> b) -> NodeVarEnv a -> NodeVarEnv b
+  fmap f (NodeVarEnv m) = NodeVarEnv $ f <$> m
+
+instance Applicative NodeVarEnv where
+  pure :: a -> NodeVarEnv a
+  pure = NodeVarEnv . pure
+
+  (<*>) :: NodeVarEnv (a -> b) -> NodeVarEnv a -> NodeVarEnv b
+  (<*>) (NodeVarEnv f) (NodeVarEnv arg) = NodeVarEnv $ f <*> arg
+
+instance Monad NodeVarEnv where
+  (>>=) :: NodeVarEnv a -> (a -> NodeVarEnv b) -> NodeVarEnv b
+  (>>=) (NodeVarEnv m) f = NodeVarEnv $ m >>= unwrapM . f
+    where
+      unwrapM (NodeVarEnv x) = x
 
 addVariable :: VarKind -> Pos Ident -> CanFail AtomicTType -> NodeVarEnv ()
 addVariable k vName typ = NodeVarEnv $ modify addVariable'

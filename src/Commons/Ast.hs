@@ -32,7 +32,7 @@ data NodeSignature = NodeSignature
   { -- | Arity of the Node
     nodeArity :: Int,
     -- | List of the type of the Input Variables of a Node
-    inputTypes :: [AtomicTType],
+    inputTypes :: [(VarIdent, AtomicTType)],
     -- | Output Type of a Node
     outputType :: NonEmpty AtomicTType
   }

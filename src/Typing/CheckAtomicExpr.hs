@@ -1,8 +1,8 @@
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TupleSections #-}
 
 module Typing.CheckAtomicExpr
   ( expectAtomicType,
-    AtomExprCand (..),
     typeConstantExpr,
     typeIdentExpr,
     typeUnOpExpr,
@@ -24,15 +24,17 @@ import Typing.Ast
 import Typing.ExprEnv
 import Typing.TypeUnification
 
-newtype AtomExprCand = AtomExprCand {unAtomize :: TExprKind TypeCand}
+type AtomExprCand = (VarIdent, TExprKind TypeCand, TypeCand)
 
-invalidTypeForExpr :: Pos a -> ExpectedType -> CanFail b
+type TypeConstraint = (VarIdent, ExpectedType)
+
+invalidTypeForExpr :: Pos a -> TypeConstraint -> CanFail b
 invalidTypeForExpr loc eTyp = reportError loc $ "This expression does not have the type " <> show eTyp <> "."
 
-expectAtomicType :: ExpectedType -> Expr -> ExprEnv (CanFail (TExpr TypeCand, TypeCand))
+expectAtomicType :: TypeConstraint -> Expr -> ExprEnv (CanFail (VarIdent, TExpr TypeCand, TypeCand))
 expectAtomicType typ e = fmap extractTypeCand <$> typeAtomicExpr' (unwrap e)
   where
-    extractTypeCand (AtomExprCand tExpr) = (e $> tExpr, exprType tExpr)
+    extractTypeCand (var, tExpr, typCand) = (var, e $> tExpr, typCand)
 
     typeAtomicExpr' (ConstantExpr c) = typeConstantExpr e typ c
     typeAtomicExpr' (IdentExpr i) = typeIdentExpr e typ i
@@ -43,29 +45,32 @@ expectAtomicType typ e = fmap extractTypeCand <$> typeAtomicExpr' (unwrap e)
     typeAtomicExpr' (TupleExpr _) = return $ invalidTypeForExpr e typ
     typeAtomicExpr' (FbyExpr arg arg') = typeAtomicFbyExpr e typ arg arg'
 
-buildAndUnify :: Pos a -> ExpectedType -> TExprKind TypeCand -> ExprEnv (CanFail AtomExprCand)
-buildAndUnify loc typ tExpr = unifToExpr (checkExpected loc typ (exprType tExpr)) <&> ($> AtomExprCand (tExpr))
+buildAndUnify :: Pos a -> TypeConstraint -> TExprKind TypeCand -> ExprEnv (CanFail AtomExprCand)
+buildAndUnify loc (var, typ) tExpr =
+  unifToExpr (checkExpected loc typ (exprType tExpr)) <&> fmap (var,tExpr,)
 
-typeConstantExpr :: Pos a -> ExpectedType -> Constant -> ExprEnv (CanFail AtomExprCand)
+typeConstantExpr :: Pos a -> TypeConstraint -> Constant -> ExprEnv (CanFail AtomExprCand)
 typeConstantExpr loc typ cst =
   unifToExpr (constantTypeCand loc cst) >>= buildAndUnify loc typ . ConstantTExpr cst
 
-typeIdentExpr :: Pos a -> ExpectedType -> Pos Ident -> ExprEnv (CanFail AtomExprCand)
+typeIdentExpr :: Pos a -> TypeConstraint -> Pos Ident -> ExprEnv (CanFail AtomExprCand)
 typeIdentExpr loc typ var = findVariable var >>= collapseA . fmap buildIdent
   where
-    buildIdent (varId, varTyp) = unifToExpr (fromAtomicType loc varTyp) >>= buildAndUnify loc typ . VarTExpr varId
+    buildIdent (varId, varTyp) =
+      unifToExpr (fromAtomicType loc varTyp)
+        >>= buildAndUnify loc typ . VarTExpr (FromIdent varId)
 
-typeUnOpExpr :: Pos a -> ExpectedType -> UnOp -> Expr -> ExprEnv (CanFail AtomExprCand)
-typeUnOpExpr loc typ op arg =
+typeUnOpExpr :: Pos a -> TypeConstraint -> UnOp -> Expr -> ExprEnv (CanFail AtomExprCand)
+typeUnOpExpr loc typ@(var, _) op arg =
   case op of
-    UnNot -> expectAtomicType (toAtom expectBool) arg >>= collapseA . fmap buildNot
-    UnNeg -> expectAtomicType (toAtom $ expectBitVector Signed) arg >>= collapseA . fmap buildNeg
+    UnNot -> expectAtomicType (var, toAtom expectBool) arg >>= collapseA . fmap buildNot
+    UnNeg -> expectAtomicType (var, toAtom $ expectBitVector Signed) arg >>= collapseA . fmap buildNeg
   where
-    buildNot (targ, aT) = buildAndUnify loc typ (UnOpTExpr UnNot targ aT)
-    buildNeg (targ, aT) = buildAndUnify loc typ (UnOpTExpr UnNeg targ aT)
+    buildNot (_, targ, aT) = buildAndUnify loc typ (UnOpTExpr UnNot targ aT)
+    buildNeg (_, targ, aT) = buildAndUnify loc typ (UnOpTExpr UnNeg targ aT)
 
-typeBinOpExpr :: Pos a -> ExpectedType -> BinOp -> Expr -> Expr -> ExprEnv (CanFail AtomExprCand)
-typeBinOpExpr loc typ op lhs rhs =
+typeBinOpExpr :: Pos a -> TypeConstraint -> BinOp -> Expr -> Expr -> ExprEnv (CanFail AtomExprCand)
+typeBinOpExpr loc typ@(var, _) op lhs rhs =
   case op of
     BinEq -> intEqOp
     BinNeq -> intEqOp
@@ -84,9 +89,9 @@ typeBinOpExpr loc typ op lhs rhs =
     BinAnd -> boolOp
     BinOr -> boolOp
   where
-    sig = toAtom $ expectBitVector Signed
-    sigOrUnsig = toAtom $ expectBitVector Unsigned <> expectBitVector Signed
-    rawSigOrUnsig = toAtom $ expectBitVector Raw <> expectBitVector Unsigned <> expectBitVector Signed
+    sig = (var, toAtom $ expectBitVector Signed)
+    sigOrUnsig = (var, toAtom $ expectBitVector Unsigned <> expectBitVector Signed)
+    rawSigOrUnsig = (var, toAtom $ expectBitVector Raw <> expectBitVector Unsigned <> expectBitVector Signed)
 
     intEqOp = do
       tLhs <- expectAtomicType rawSigOrUnsig lhs
@@ -99,28 +104,28 @@ typeBinOpExpr loc typ op lhs rhs =
       collapseA $ buildBoolOp <$> tLhs <*> tRhs
 
     boolOp = do
-      tLhs <- expectAtomicType (toAtom expectBool) lhs
-      tRhs <- expectAtomicType (toAtom expectBool) rhs
+      tLhs <- expectAtomicType (var, toAtom expectBool) lhs
+      tRhs <- expectAtomicType (var, toAtom expectBool) rhs
       collapseA $ buildBoolOp <$> tLhs <*> tRhs
 
-    buildBoolOp (tLhs, lhsTyp) (tRhs, rhsTyp) =
+    buildBoolOp (_, tLhs, lhsTyp) (_, tRhs, rhsTyp) =
       unifToExpr (unifyTypeCand loc lhsTyp rhsTyp)
         >>= embed . ($> unifToExpr (fromAtomicType loc TBool))
         >>= collapseA . fmap (buildAndUnify loc typ . BinOpTExpr op tLhs tRhs)
 
-    buildBVOp (tLhs, lhsTyp) (tRhs, rhsTyp) =
+    buildBVOp (_, tLhs, lhsTyp) (_, tRhs, rhsTyp) =
       unifToExpr (unifyTypeCand loc lhsTyp rhsTyp)
         >>= collapseA . fmap (buildAndUnify loc typ . BinOpTExpr op tLhs tRhs)
 
-typeAtomicIfExpr :: Pos a -> ExpectedType -> Expr -> Expr -> Expr -> ExprEnv (CanFail AtomExprCand)
-typeAtomicIfExpr loc typ cond tb fb = do
-  tCond <- expectAtomicType (fromType TBool) cond
-  condId <- embed $ buildIfCondEq . fst <$> tCond
+typeAtomicIfExpr :: Pos a -> TypeConstraint -> Expr -> Expr -> Expr -> ExprEnv (CanFail AtomExprCand)
+typeAtomicIfExpr loc typ@(var, _) cond tb fb = do
+  tCond <- expectAtomicType (var, fromType TBool) cond
+  condId <- embed $ buildIfCondEq <$> tCond
   tTb <- expectAtomicType typ tb
   tFb <- expectAtomicType typ fb
   collapseA $ buildIf <$> condId <*> tTb <*> tFb
   where
-    buildIf condVarId (tTrue, typeTrue) (tFalse, typeFalse) =
+    buildIf condVarId (_, tTrue, typeTrue) (_, tFalse, typeFalse) =
       unifToExpr (unifyTypeCand loc typeTrue typeFalse)
         >>= collapseA . fmap (buildAndUnify loc typ . IfTExpr condVarId tTrue tFalse)
 
@@ -128,6 +133,7 @@ checkCall :: Pos a -> Pos Ident -> [Expr] -> ExprEnv (CanFail (NonEmpty (TExprKi
 checkCall loc node args = findNode node >>= collapseA . fmap typeAppExpr'
   where
     typeAppExpr' n@(_, nodeSig) = checkInputs args nodeSig >>= embed . fmap (genOutVars n)
+    snd3 (_, x, _) = x
 
     genOutVars nodeSig tArgs =
       let buildExpr (vId, vTyp) = do
@@ -155,22 +161,21 @@ checkCall loc node args = findNode node >>= collapseA . fmap typeAppExpr'
                   <> "."
             EQ -> sequenceA <$> Monad.zipWithM unifyArg (inputTypes nodeSig) nodeArgs
 
-    unifyArg atyp expr = expectAtomicType (fromType atyp) expr <&> fmap fst
+    unifyArg (vName, atyp) expr = expectAtomicType (vName, fromType atyp) expr <&> fmap snd3
 
-typeAtomicAppExpr :: Pos a -> ExpectedType -> Pos Ident -> [Expr] -> ExprEnv (CanFail AtomExprCand)
+typeAtomicAppExpr :: Pos a -> TypeConstraint -> Pos Ident -> [Expr] -> ExprEnv (CanFail AtomExprCand)
 typeAtomicAppExpr loc typ node args = checkCall loc node args >>= collapseA . fmap typeAtomicAppExpr'
   where
     typeAtomicAppExpr' (outVar :| []) = buildAndUnify loc typ outVar
     typeAtomicAppExpr' (_ :| _ : _) = return $ invalidTypeForExpr loc typ
 
-typeAtomicFbyExpr :: Pos a -> ExpectedType -> Expr -> Expr -> ExprEnv (CanFail AtomExprCand)
+typeAtomicFbyExpr :: Pos a -> TypeConstraint -> Expr -> Expr -> ExprEnv (CanFail AtomExprCand)
 typeAtomicFbyExpr loc typ initE nextE = do
   tInitE <- expectAtomicType typ initE
   tNextE <- expectAtomicType typ nextE
   collapseA $ buildFby <$> tInitE <*> tNextE
   where
-    buildFby :: (TExpr TypeCand, TypeCand) -> (TExpr TypeCand, TypeCand) -> ExprEnv (CanFail AtomExprCand)
-    buildFby (tTrue, typeTrue) (tFalse, typeFalse) = do
+    buildFby (v, tTrue, typeTrue) (_, tFalse, typeFalse) = do
       tCand <- unifToExpr (unifyTypeCand loc typeTrue typeFalse)
-      fbyVar <- embed $ buildFbyEq tTrue tFalse <$> tCand
+      fbyVar <- embed $ buildFbyEq v tTrue tFalse <$> tCand
       collapseA $ buildAndUnify loc typ <$> (VarTExpr <$> fbyVar <*> tCand)

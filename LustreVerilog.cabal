@@ -23,7 +23,7 @@ source-repository head
   location: https://github.com/desfreng/LustreVerilog/
 
 common warnings
-    ghc-options: -Wall -Wextra -g
+    ghc-options: -Wall -Wextra
 
 library
     import:           warnings
@@ -52,7 +52,7 @@ library
         Typing.TypeNode,
         Typing.TypeUnification
 
-    other-extensions: Safe
+    default-extensions: Safe
 
     build-depends:
         base >= 4.18 && < 5,
@@ -70,11 +70,10 @@ executable LustreVerilog
     import:           warnings
     main-is:          Main.hs
 
-    -- Modules included in this executable, other than Main.
-    -- other-modules:
+    other-modules:
+        ExportTyped
 
-    -- LANGUAGE extensions used by modules in this package.
-    other-extensions: Safe
+    default-extensions: Safe
 
     build-depends:
         base >= 4.18 && < 5,
@@ -95,8 +94,7 @@ test-suite IntegTest
     -- Modules included in this executable, other than Main.
     -- other-modules:
 
-    -- LANGUAGE extensions used by modules in this package.
-    other-extensions: Safe
+    default-extensions: Safe
 
     build-depends:
         base >= 4.18 && < 5,

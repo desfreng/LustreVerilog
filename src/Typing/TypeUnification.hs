@@ -1,5 +1,4 @@
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -34,7 +33,7 @@ import Commons.Types (AtomicTType (..), BVSize (..), BitVectorKind (..))
 import Commons.TypingError (CanFail, embed, reportError)
 import qualified Control.Monad as Monad
 import Control.Monad.Reader (Reader, runReader)
-import Control.Monad.State.Strict (MonadState (state), State, StateT (StateT), runState)
+import Control.Monad.State.Strict (MonadState (state), State, runState)
 import Data.Bifunctor (Bifunctor (second))
 import Data.Foldable (find)
 import Data.Functor (($>), (<&>))
@@ -48,7 +47,6 @@ import qualified Data.Map as Map
 import Data.Maybe
 import Data.Monoid
 import Data.String (IsString (..))
-import GHC.Num (integerLog2)
 import Typing.MonadUnif (ConvertibleToInt (..), MonadAssocReader (..), MonadUnif (..), UnifState, emptyState)
 
 newtype UnsignedSize = UnSig BVSize
@@ -64,7 +62,14 @@ data TypeKind
   | Custom TypeIdent [TypeCand]
 
 newtype TypeCand = TypeCand Int
-  deriving (Eq, Ord, Enum)
+  deriving (Eq, Ord)
+
+instance Enum TypeCand where
+  toEnum :: Int -> TypeCand
+  toEnum = TypeCand
+
+  fromEnum :: TypeCand -> Int
+  fromEnum (TypeCand i) = i
 
 instance ConvertibleToInt TypeCand where
   toInt :: TypeCand -> Int
@@ -81,7 +86,10 @@ instance Show ExpectedKind where
   show (UnsizedBitVector Signed) = "i??"
 
 newtype ExpectedList = ExpectedList (NonEmpty ExpectedKind)
-  deriving (Semigroup)
+
+instance Semigroup ExpectedList where
+  (<>) :: ExpectedList -> ExpectedList -> ExpectedList
+  (ExpectedList a) <> (ExpectedList b) = ExpectedList $ a <> b
 
 data ExpectedType = EList ExpectedList | EType AtomicTType
 
@@ -98,8 +106,24 @@ type StateUnifier = UnifState TypeCand TypeKind
 
 data UState = UState {unifState :: StateUnifier, nextId :: TypeCand, typCandPos :: IntMap (Pos ())}
 
-newtype TypeUnifier a = AtomicUnifier (State UState a)
-  deriving (Functor, Applicative, Monad)
+newtype TypeUnifier a = TypeUnifier (State UState a)
+
+instance Functor TypeUnifier where
+  fmap :: (a -> b) -> TypeUnifier a -> TypeUnifier b
+  fmap f (TypeUnifier m) = TypeUnifier $ f <$> m
+
+instance Applicative TypeUnifier where
+  pure :: a -> TypeUnifier a
+  pure = TypeUnifier . pure
+
+  (<*>) :: TypeUnifier (a -> b) -> TypeUnifier a -> TypeUnifier b
+  (<*>) (TypeUnifier f) (TypeUnifier arg) = TypeUnifier $ f <*> arg
+
+instance Monad TypeUnifier where
+  (>>=) :: TypeUnifier a -> (a -> TypeUnifier b) -> TypeUnifier b
+  (>>=) (TypeUnifier m) f = TypeUnifier $ m >>= unwrapM . f
+    where
+      unwrapM (TypeUnifier x) = x
 
 instance (Semigroup a) => Semigroup (TypeUnifier a) where
   (<>) :: TypeUnifier a -> TypeUnifier a -> TypeUnifier a
@@ -111,7 +135,7 @@ instance (IsString a) => IsString (TypeUnifier a) where
 
 instance MonadState StateUnifier TypeUnifier where
   state :: (UnifState TypeCand TypeKind -> (a, UnifState TypeCand TypeKind)) -> TypeUnifier a
-  state f = AtomicUnifier . state $ \s -> let (x, s') = f (unifState s) in (x, s {unifState = s'})
+  state f = TypeUnifier . state $ \s -> let (x, s') = f (unifState s) in (x, s {unifState = s'})
 
 instance MonadUnif TypeCand TypeKind TypeUnifier where
   {-# INLINEABLE subVars #-}
@@ -279,7 +303,7 @@ checkExpected loc (EType eTyp) = checkExpectedType loc eTyp
 
 buildAndBind :: Pos a -> TypeKind -> TypeUnifier TypeCand
 buildAndBind loc v = do
-  vId <- AtomicUnifier $ state mintNewCand
+  vId <- TypeUnifier $ state mintNewCand
   setVal vId v
   where
     mintNewCand s =
@@ -292,6 +316,9 @@ buildAndBind loc v = do
 constantTypeCand :: Pos a -> Constant -> TypeUnifier TypeCand
 constantTypeCand loc = buildAndBind loc . go
   where
+    integerLog2 :: Integer -> Int
+    integerLog2 = floor . logBase (2.0 :: Double) . fromIntegral
+
     go (BoolConst _) = Bool
     go (IntegerConst i) =
       let log2 = fromEnum (integerLog2 i)
@@ -319,7 +346,7 @@ expectBool = ExpectedList (NonEmpty.singleton BoolExp)
 instance MonadAssocReader TypeCand TypeKind (Reader StateUnifier)
 
 runUnifier :: TypeUnifier a -> (a, CanFail (Map TypeCand AtomicTType))
-runUnifier (AtomicUnifier m) = second buildMap $ runState m initialState
+runUnifier (TypeUnifier m) = second buildMap $ runState m initialState
   where
     initialState = UState {unifState = emptyState, nextId = TypeCand 0, typCandPos = mempty}
 

@@ -1,5 +1,4 @@
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
@@ -51,13 +50,13 @@ findNode nodeName = ExprEnv $ asks (findNode' . fst)
           let Ident s = unwrap nodeName
            in reportError nodeName $ "Unknown node " <> unpack s <> "."
 
-findVariable :: Pos Ident -> ExprEnv (CanFail (VarId, AtomicTType))
+findVariable :: Pos Ident -> ExprEnv (CanFail (VarIdent, AtomicTType))
 findVariable varName = ExprEnv $ asks (findVariable' . snd)
   where
     varId = VarIdent varName
     findVariable' vs =
       case Map.lookup varId vs of
-        Just sig -> (FromIdent varId,) <$> sig
+        Just sig -> (varId,) <$> sig
         Nothing ->
           let Ident s = unwrap varName
            in reportError varName $ "Unknown variable " <> unpack s <> "."
@@ -76,7 +75,23 @@ data ExprState = ExprState
   }
 
 newtype ExprEnv a = ExprEnv (ReaderT (NodeMapping, VarMapping) (StateT ExprState TypeUnifier) a)
-  deriving (Functor, Applicative, Monad)
+
+instance Functor ExprEnv where
+  fmap :: (a -> b) -> ExprEnv a -> ExprEnv b
+  fmap f (ExprEnv m) = ExprEnv $ f <$> m
+
+instance Applicative ExprEnv where
+  pure :: a -> ExprEnv a
+  pure = ExprEnv . pure
+
+  (<*>) :: ExprEnv (a -> b) -> ExprEnv a -> ExprEnv b
+  (<*>) (ExprEnv f) (ExprEnv arg) = ExprEnv $ f <*> arg
+
+instance Monad ExprEnv where
+  (>>=) :: ExprEnv a -> (a -> ExprEnv b) -> ExprEnv b
+  (>>=) (ExprEnv m) f = ExprEnv $ m >>= unwrapM . f
+    where
+      unwrapM (ExprEnv x) = x
 
 freshVar :: (Int -> VarId) -> VarInfo -> ExprEnv VarId
 freshVar gVar vInfo = ExprEnv . state $ freshVar' gVar vInfo
@@ -90,15 +105,15 @@ freshVar gVar vInfo = ExprEnv . state $ freshVar' gVar vInfo
 addEq :: TCandEq -> ExprEnv ()
 addEq eq = ExprEnv . modify $ \s -> s {sideEqs = eq : sideEqs s}
 
-buildIfCondEq :: TExpr TypeCand -> ExprEnv VarId
-buildIfCondEq expr = do
-  vId <- freshVar VarIfCondition (WithType TBool)
+buildIfCondEq :: (VarIdent, TExpr TypeCand, TypeCand) -> ExprEnv VarId
+buildIfCondEq (varOrig, expr, _) = do
+  vId <- freshVar (VarIfCondition varOrig) (WithType TBool)
   () <- addEq (SimpleEq vId expr)
   return vId
 
-buildFbyEq :: TExpr TypeCand -> TExpr TypeCand -> TypeCand -> ExprEnv VarId
-buildFbyEq initFby nextFby typeCand = do
-  vId <- freshVar VarFbyDefinition (DerivingFrom typeCand)
+buildFbyEq :: VarIdent -> TExpr TypeCand -> TExpr TypeCand -> TypeCand -> ExprEnv VarId
+buildFbyEq varOrig initFby nextFby typeCand = do
+  vId <- freshVar (VarFbyDefinition varOrig) (DerivingFrom typeCand)
   () <- addEq (FbyEq vId initFby nextFby)
   return vId
 

@@ -47,6 +47,6 @@ typeEq (Equation p e) = do
   tPat <- typePat p
   collapseA $ (flip checkExprType) e <$> tPat
 
-typePat :: Pattern -> ExprEnv (CanFail (Tree (VarId, AtomicTType)))
+typePat :: Pattern -> ExprEnv (CanFail (Tree (VarIdent, AtomicTType)))
 typePat (TreeLeaf x) = fmap TreeLeaf <$> findVariable x
 typePat (TreeNode l) = fmap TreeNode . sequenceA <$> mapM typePat l

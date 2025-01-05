@@ -1,4 +1,4 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
 module Typing.NodeEnv
@@ -24,7 +24,23 @@ import Typing.Environments
 type NodeWriter = CanFail [(NodeIdent, TNode)]
 
 newtype NodeEnv a = NodeEnv (StateT NodeMapping (Writer NodeWriter) a)
-  deriving (Functor, Applicative, Monad)
+
+instance Functor NodeEnv where
+  fmap :: (a -> b) -> NodeEnv a -> NodeEnv b
+  fmap f (NodeEnv m) = NodeEnv $ f <$> m
+
+instance Applicative NodeEnv where
+  pure :: a -> NodeEnv a
+  pure = NodeEnv . pure
+
+  (<*>) :: NodeEnv (a -> b) -> NodeEnv a -> NodeEnv b
+  (<*>) (NodeEnv f) (NodeEnv arg) = NodeEnv $ f <*> arg
+
+instance Monad NodeEnv where
+  (>>=) :: NodeEnv a -> (a -> NodeEnv b) -> NodeEnv b
+  (>>=) (NodeEnv m) f = NodeEnv $ m >>= unwrapM . f
+    where
+      unwrapM (NodeEnv x) = x
 
 validateNode :: TNode -> CanFail TNode
 validateNode = pure
@@ -47,7 +63,8 @@ addNode nName nNode =
     buildSig :: TNode -> NodeSignature
     buildSig (Node n _) =
       let varTyp = nodeVarTypes n
-          inputTyp = (!) varTyp . FromIdent <$> nodeInput n
+          buildInput varIn = (varIn, varTyp ! FromIdent varIn)
+          inputTyp = buildInput <$> nodeInput n
           outputTyp = (!) varTyp . FromIdent <$> nodeOutput n
        in NodeSignature (length inputTyp) inputTyp outputTyp
 
