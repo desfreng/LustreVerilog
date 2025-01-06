@@ -3,9 +3,9 @@
 module Main (main) where
 
 import qualified Data.ByteString.Lazy as B
--- import Data.Semigroup ((<>))
 import Data.Text.Lazy (Text)
 import Data.Text.Lazy.Encoding (decodeUtf8)
+import ExportTyped (exportTyped)
 import LustreVerilog
 import Options.Applicative
 import System.Exit (ExitCode (..), exitWith)
@@ -59,7 +59,7 @@ runCompiler opts = do
   case stage opts of
     ParsingStage -> dumpIfDebug opts ast
     TypingStage -> dumpIfDebug opts tast
-    ExportNormalised -> undefined tast
+    ExportNormalised -> exportTyped tast
     CompileStage -> undefined
 
 readInputFile :: String -> IO (String, Text)

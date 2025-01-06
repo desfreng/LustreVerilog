@@ -87,7 +87,8 @@ addError (Error s) (L pos _ end) err = Error $ NonEmpty.cons (Err pos (TypingErr
 runCanFail :: FilePath -> Text -> CanFail a -> Either (ParseErrorBundle Text TypingError) a
 runCanFail fileName input (Error s) = Left $ ParseErrorBundle errList (initialPosState fileName input)
   where
-    errList = toError <$> NonEmpty.nub s
+    errList = toError <$> (NonEmpty.sortBy cmpErr $ NonEmpty.nub s)
+    cmpErr (Err x _) (Err y _) = compare x y
     toError (Err pos desc) = FancyError pos . Set.singleton . ErrorCustom $ desc
 runCanFail _ _ (Ok x) = Right x
 

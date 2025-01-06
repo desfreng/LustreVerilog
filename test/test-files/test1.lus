@@ -1,8 +1,10 @@
 /* type Bool = False | True */
 
 node f () returns (o : u4; j : bool);
-var i: int;
+var i: bool;
 let
+    i = true fby false fby true fby i;
+    j = i and false fby (not j);
     o = 10 + 1;
 tel
 
