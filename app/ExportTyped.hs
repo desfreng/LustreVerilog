@@ -1,7 +1,7 @@
 module ExportTyped (exportTyped) where
 
-import Data.Text (Text)
-import Typing.Ast (TAst)
+import Data.Text.Lazy (Text)
+import LustreVerilog
 
 exportTyped :: TAst -> Text
 exportTyped = error "Not Implemented"

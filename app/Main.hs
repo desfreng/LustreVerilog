@@ -5,11 +5,13 @@ module Main (main) where
 import qualified Data.ByteString.Lazy as B
 import Data.Text.Lazy (Text)
 import Data.Text.Lazy.Encoding (decodeUtf8)
+import Data.Text.Lazy.IO (writeFile)
 import ExportTyped (exportTyped)
 import LustreVerilog
 import Options.Applicative
 import System.Exit (ExitCode (..), exitWith)
 import Text.Pretty.Simple (pPrint)
+import Prelude hiding (writeFile)
 
 data Stage = ParsingStage | TypingStage | ExportNormalised | CompileStage
   deriving (Show)
@@ -59,8 +61,8 @@ runCompiler opts = do
   case stage opts of
     ParsingStage -> dumpIfDebug opts ast
     TypingStage -> dumpIfDebug opts tast
-    ExportNormalised -> exportTyped tast
-    CompileStage -> undefined
+    ExportNormalised -> writeFile (outputFile opts) $ exportTyped tast
+    CompileStage -> writeFile (outputFile opts) $ compileInput tast
 
 readInputFile :: String -> IO (String, Text)
 readInputFile "-" = ("stdin",) . decodeUtf8 <$> B.getContents
@@ -78,3 +80,6 @@ typeInput :: FilePath -> Text -> PAst -> IO TAst
 typeInput path txt ast = case typeFile path txt ast of
   Left err -> putStrLn (errorBundlePretty err) >> exitWith (ExitFailure 3)
   Right tast -> return tast
+
+compileInput :: TAst -> Text
+compileInput = error "Not Implemented"
