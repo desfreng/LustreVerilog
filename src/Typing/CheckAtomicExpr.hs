@@ -24,18 +24,16 @@ import Typing.Ast
 import Typing.ExprEnv
 import Typing.TypeUnification
 
-type AtomExprCand = (VarIdent, TExprKind TypeCand, TypeCand)
+type AtomExprCand = (VarIdent, TExpr TypeCand, TypeCand)
 
 type TypeConstraint = (VarIdent, ExpectedType)
 
 invalidTypeForExpr :: Pos a -> TypeConstraint -> CanFail b
 invalidTypeForExpr loc eTyp = reportError loc $ "This expression does not have the type " <> show eTyp <> "."
 
-expectAtomicType :: TypeConstraint -> Expr -> ExprEnv (CanFail (VarIdent, TExpr TypeCand, TypeCand))
-expectAtomicType typ e = fmap extractTypeCand <$> typeAtomicExpr' (unwrap e)
+expectAtomicType :: TypeConstraint -> Expr -> ExprEnv (CanFail AtomExprCand)
+expectAtomicType typ e = typeAtomicExpr' (unwrap e)
   where
-    extractTypeCand (var, tExpr, typCand) = (var, e $> tExpr, typCand)
-
     typeAtomicExpr' (ConstantExpr c) = typeConstantExpr e typ c
     typeAtomicExpr' (IdentExpr i) = typeIdentExpr e typ i
     typeAtomicExpr' (UnOpExpr op arg) = typeUnOpExpr e typ op arg
@@ -45,7 +43,7 @@ expectAtomicType typ e = fmap extractTypeCand <$> typeAtomicExpr' (unwrap e)
     typeAtomicExpr' (TupleExpr _) = return $ invalidTypeForExpr e typ
     typeAtomicExpr' (FbyExpr arg arg') = typeAtomicFbyExpr e typ arg arg'
 
-buildAndUnify :: Pos a -> TypeConstraint -> TExprKind TypeCand -> ExprEnv (CanFail AtomExprCand)
+buildAndUnify :: Pos a -> TypeConstraint -> TExpr TypeCand -> ExprEnv (CanFail AtomExprCand)
 buildAndUnify loc (var, typ) tExpr =
   unifToExpr (checkExpected loc typ (exprType tExpr)) <&> fmap (var,tExpr,)
 
@@ -129,7 +127,7 @@ typeAtomicIfExpr loc typ@(var, _) cond tb fb = do
       unifToExpr (unifyTypeCand loc typeTrue typeFalse)
         >>= collapseA . fmap (buildAndUnify loc typ . IfTExpr condVarId tTrue tFalse)
 
-checkCall :: Pos a -> Pos Ident -> [Expr] -> ExprEnv (CanFail (NonEmpty (TExprKind TypeCand)))
+checkCall :: Pos a -> Pos Ident -> [Expr] -> ExprEnv (CanFail (NonEmpty (TExpr TypeCand)))
 checkCall loc node args = findNode node >>= collapseA . fmap typeAppExpr'
   where
     typeAppExpr' n@(_, nodeSig) = checkInputs args nodeSig >>= embed . fmap (genOutVars n)

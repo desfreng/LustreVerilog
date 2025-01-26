@@ -28,21 +28,17 @@ type EqRHS = Tree (VarIdent, ExpectedType)
 
 type ExprCand = Tree (VarIdent, TExpr TypeCand, TypeCand)
 
-type ExprKindCand = Tree (VarIdent, TExprKind TypeCand, TypeCand)
-
 checkExprType :: Tree (VarIdent, AtomicTType) -> Expr -> ExprEnv (CanFail (NonEmpty (TEquation TypeCand)))
 checkExprType rhs lhs =
   let rhsTyp = second fromType <$> rhs
    in typeExpr rhsTyp lhs <&> fmap buildEqs
   where
     buildEqs tEqs = toNonEmpty $ buildEq <$> tEqs
-    buildEq (v, e, _) = SimpleEq (FromIdent v) e
+    buildEq (v, e, _) = SimpleTEq (FromIdent v) e
 
 typeExpr :: EqRHS -> Expr -> ExprEnv (CanFail ExprCand)
-typeExpr typ e = fmap (fmap buildExpr) <$> typeExpr' (unwrap e)
+typeExpr typ e = typeExpr' (unwrap e)
   where
-    buildExpr (vId, exprKind, exprTyp) = (vId, e $> exprKind, exprTyp)
-
     typeExpr' (ConstantExpr c) = cstExpr e typ c
     typeExpr' (IdentExpr i) = identExpr e typ i
     typeExpr' (UnOpExpr op arg) = unOpExpr e typ op arg
@@ -55,23 +51,23 @@ typeExpr typ e = fmap (fmap buildExpr) <$> typeExpr' (unwrap e)
 invalidTypeForExpr :: Pos a -> EqRHS -> CanFail b
 invalidTypeForExpr loc eTyp = reportError loc $ "This expression does not have the type " <> show eTyp <> "."
 
-cstExpr :: Pos a -> EqRHS -> Constant -> ExprEnv (CanFail ExprKindCand)
+cstExpr :: Pos a -> EqRHS -> Constant -> ExprEnv (CanFail ExprCand)
 cstExpr loc rhs@(TreeNode _) _ = return $ invalidTypeForExpr loc rhs
 cstExpr loc (TreeLeaf typ) cst = fmap TreeLeaf <$> typeConstantExpr loc typ cst
 
-identExpr :: Pos a -> EqRHS -> Pos Ident -> ExprEnv (CanFail ExprKindCand)
+identExpr :: Pos a -> EqRHS -> Pos Ident -> ExprEnv (CanFail ExprCand)
 identExpr loc rhs@(TreeNode _) _ = return $ invalidTypeForExpr loc rhs
 identExpr loc (TreeLeaf typ) vName = fmap TreeLeaf <$> typeIdentExpr loc typ vName
 
-unOpExpr :: Pos a -> EqRHS -> UnOp -> Expr -> ExprEnv (CanFail ExprKindCand)
+unOpExpr :: Pos a -> EqRHS -> UnOp -> Expr -> ExprEnv (CanFail ExprCand)
 unOpExpr loc rhs@(TreeNode _) _ _ = return $ invalidTypeForExpr loc rhs
 unOpExpr loc (TreeLeaf typ) op arg = fmap TreeLeaf <$> typeUnOpExpr loc typ op arg
 
-binOpExpr :: Pos a -> EqRHS -> BinOp -> Expr -> Expr -> ExprEnv (CanFail ExprKindCand)
+binOpExpr :: Pos a -> EqRHS -> BinOp -> Expr -> Expr -> ExprEnv (CanFail ExprCand)
 binOpExpr loc rhs@(TreeNode _) _ _ _ = return $ invalidTypeForExpr loc rhs
 binOpExpr loc (TreeLeaf typ) op lhs rhs = fmap TreeLeaf <$> typeBinOpExpr loc typ op lhs rhs
 
-buildAndUnify :: Pos a -> EqRHS -> Tree (TExprKind TypeCand) -> ExprEnv (CanFail ExprKindCand)
+buildAndUnify :: Pos a -> EqRHS -> Tree (TExpr TypeCand) -> ExprEnv (CanFail ExprCand)
 buildAndUnify loc lhs rhs = do
   zipped <- Tree.zipWithM unifyLeaves lhs rhs
   case zipped of
@@ -86,7 +82,7 @@ buildAndUnify loc lhs rhs = do
 
     unifyLeaves (v, expE) tExpr = unifToExpr (checkExpected loc expE (exprType tExpr)) <&> fmap (v,tExpr,)
 
-typeIfExpr :: Pos a -> EqRHS -> Expr -> Expr -> Expr -> ExprEnv (CanFail ExprKindCand)
+typeIfExpr :: Pos a -> EqRHS -> Expr -> Expr -> Expr -> ExprEnv (CanFail ExprCand)
 typeIfExpr loc mtyp cond tb fb = do
   tCond <- expectAtomicType (fst $ head mtyp, fromType TBool) cond
   condId <- embed $ buildIfCondEq <$> tCond
@@ -109,13 +105,13 @@ typeIfExpr loc mtyp cond tb fb = do
       tCand <- unifToExpr $ unifyTypeCand loc trueTyp falseTyp
       return $ IfTExpr condVarId tTrue tFalse <$> tCand
 
-typeAppExpr :: Pos a -> EqRHS -> Pos Ident -> [Expr] -> ExprEnv (CanFail ExprKindCand)
+typeAppExpr :: Pos a -> EqRHS -> Pos Ident -> [Expr] -> ExprEnv (CanFail ExprCand)
 typeAppExpr loc mtyp node args = checkCall loc node args >>= collapseA . fmap (typeAppExpr' . fmap TreeLeaf)
   where
     typeAppExpr' (outVar :| []) = buildAndUnify loc mtyp outVar
     typeAppExpr' (x :| y : l) = buildAndUnify loc mtyp (TreeNode (BiList x y l))
 
-typeTupleExpr :: Pos a -> EqRHS -> BiList Expr -> ExprEnv (CanFail ExprKindCand)
+typeTupleExpr :: Pos a -> EqRHS -> BiList Expr -> ExprEnv (CanFail ExprCand)
 typeTupleExpr loc mtyp args =
   case mtyp of
     TreeLeaf _ -> do
@@ -141,9 +137,9 @@ typeTupleExpr loc mtyp args =
               collapseA $ buildAndUnify loc mtyp <$> tExpr
 
     buildTree Nothing = reportError loc "Unknown Typing Error (BiList should have the same size)"
-    buildTree (Just tExprList) = TreeNode . fmap (fmap (unwrap . snd3)) <$> sequenceA tExprList
+    buildTree (Just tExprList) = TreeNode . fmap (fmap snd3) <$> sequenceA tExprList
 
-typeFbyExpr :: Pos a -> EqRHS -> Expr -> Expr -> ExprEnv (CanFail ExprKindCand)
+typeFbyExpr :: Pos a -> EqRHS -> Expr -> Expr -> ExprEnv (CanFail ExprCand)
 typeFbyExpr loc mtyp initE nextE = do
   initTExpr <- typeExpr mtyp initE
   nextTExpr <- typeExpr mtyp nextE

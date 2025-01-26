@@ -12,6 +12,7 @@ import Commons.Types
 import Control.Monad (join, void)
 import Control.Monad.Combinators.Expr (Operator (..), makeExprParser)
 import qualified Control.Monad.Combinators.NonEmpty as Comb (sepBy1, someTill)
+import Control.Monad.Reader
 import Data.Char (isAsciiLower, isAsciiUpper, isDigit)
 import Data.Functor (($>))
 import Data.List.NonEmpty (NonEmpty (..))
@@ -25,7 +26,7 @@ import Text.Megaparsec hiding (Pos)
 import Text.Megaparsec.Char (char, space1, string)
 import qualified Text.Megaparsec.Char.Lexer as L
 
-type Parser = Parsec Void Text
+type Parser = ParsecT Void Text (Reader Int)
 
 data Keyword
   = TRUE
@@ -132,13 +133,14 @@ pBool = pTrue <|> pFalse
     pFalse = fmap (const False) <$> keyword FALSE
 
 pType :: Parser (Pos LustreType)
-pType =
+pType = do
+  defaultSize <- ask
   choice
     [ fmap (const BoolType) <$> keyword BOOL,
       pLoc pRaw,
       pLoc pUnsig,
       try (pLoc pSig),
-      fmap (const (BitVectorType Signed (BVSize 32))) <$> keyword INT
+      fmap (const (BitVectorType Signed (BVSize defaultSize))) <$> keyword INT
     ]
   where
     pRaw = char 'r' >> BitVectorType Raw . BVSize <$> L.decimal

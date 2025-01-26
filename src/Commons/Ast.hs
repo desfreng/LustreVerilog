@@ -6,13 +6,20 @@ import Commons.Ids (NodeIdent, VarIdent)
 import Commons.Types (AtomicTType)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Map (Map)
+import qualified Data.Map as Map
 import Data.Set (Set)
+import qualified Data.Set as Set
 
 data Constant = BoolConst Bool | IntegerConst Integer
   deriving (Show, Eq)
 
 data UnOp = UnNot | UnNeg
-  deriving (Show, Eq)
+  deriving (Eq, Ord)
+
+instance Show UnOp where
+  show :: UnOp -> String
+  show UnNeg = "neg"
+  show UnNot = "not"
 
 data BinOp
   = BinEq
@@ -25,7 +32,20 @@ data BinOp
   | BinSub
   | BinAnd
   | BinOr
-  deriving (Show, Eq)
+  deriving (Eq, Ord)
+
+instance Show BinOp where
+  show :: BinOp -> String
+  show BinEq = "eq"
+  show BinNeq = "neq"
+  show BinLt = "lt"
+  show BinLe = "le"
+  show BinGt = "gt"
+  show BinGe = "ge"
+  show BinAdd = "add"
+  show BinSub = "sub"
+  show BinAnd = "and"
+  show BinOr = "or"
 
 -- | The Type Signature of a Lustre Node
 data NodeSignature = NodeSignature
@@ -54,11 +74,18 @@ data NodeContext var = NodeContext
 data Node var eq = Node (NodeContext var) (NonEmpty eq)
   deriving (Show)
 
--- | A Typed Lustre Program
+-- | A Generic Lustre Ast
 data Ast node = Ast
   { -- | Mapping from nodes of the Lustre Program to their input and output Types
-    tastNodeDecl :: Map NodeIdent NodeSignature,
+    nodeSigs :: Map NodeIdent NodeSignature,
     -- | List of the Node of the Lustre Program
-    tastNodes :: [(NodeIdent, node)]
+    nodes :: [(NodeIdent, node)]
   }
   deriving (Show)
+
+newContext :: (Ord b) => NodeContext a -> (a -> b) -> Set b -> Map b AtomicTType -> NodeContext b
+newContext nCtx f newLocals newVarTypes =
+  let oldLocals = foldMap (Set.singleton . f) (nodeLocal nCtx)
+      convertOldBinding varIdent aTyp = Map.singleton (f varIdent) aTyp
+      oldVarTypes = Map.foldMapWithKey convertOldBinding (nodeVarTypes nCtx)
+   in nCtx {nodeLocal = oldLocals <> newLocals, nodeVarTypes = oldVarTypes <> newVarTypes}

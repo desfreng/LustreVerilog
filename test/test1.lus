@@ -1,0 +1,15 @@
+node after(x: bool) returns (after: bool);
+let
+   after = x or (false fby after);
+tel
+
+node cycle3() returns (o: bool);
+let
+    o = true fby false fby false fby o;
+tel
+
+node main(a: bool) returns (x, y: bool);
+let
+    x = after(a);
+    y = cycle3();
+tel

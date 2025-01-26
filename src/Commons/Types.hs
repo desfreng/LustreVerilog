@@ -5,9 +5,14 @@
 module Commons.Types where
 
 import Commons.Ids (TypeIdent)
+import Prettyprinter (Doc, Pretty (pretty))
 
 newtype BVSize = BVSize Int
   deriving (Show, Eq, Ord)
+
+instance Pretty BVSize where
+  pretty :: BVSize -> Doc ann
+  pretty (BVSize i) = pretty i
 
 data BitVectorKind = Raw | Unsigned | Signed
   deriving (Show, Eq, Ord)
@@ -31,3 +36,8 @@ instance Show AtomicTType where
   show (TCustom x args) =
     let strArgs = (\t -> "(" <> show t <> ")") <$> args
      in "custom " <> show x <> " " <> unwords strArgs
+
+typeSize :: AtomicTType -> BVSize
+typeSize TBool = BVSize 1
+typeSize (TBitVector _ s) = s
+typeSize (TCustom _ _) = error "Not Implemented"

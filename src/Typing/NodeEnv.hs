@@ -52,7 +52,7 @@ instance Monad NodeEnv where
 
 addNode :: Pos Ident -> CanFail TNode -> NodeEnv ()
 addNode nName nNode =
-  let nodeId = NodeIdent nName
+  let nodeId = NodeIdent $ unwrap nName
    in do
         nMap <- NodeEnv get
         case Map.lookup nodeId nMap of
@@ -91,10 +91,9 @@ varError _ _ f (FromIdent var@(VarIdent vLoc)) = reportError vLoc . f $ show var
 varError loc errId _ var = reportError loc $ "Unknown Typing error (" <> errId <> " " <> show var <> ")"
 
 declVars :: NodeContext VarId -> Set VarId
-declVars NodeContext {nodeInput, nodeOutput, nodeLocal} =
-  let inSet = Set.fromList $ FromIdent <$> nodeInput
-      outSet = Set.fromList $ FromIdent <$> toList nodeOutput
-   in inSet `Set.union` outSet `Set.union` nodeLocal
+declVars NodeContext {nodeOutput, nodeLocal} =
+  let outSet = Set.fromList $ FromIdent <$> toList nodeOutput
+   in outSet `Set.union` nodeLocal
 
 checkVarDef :: Pos a -> TNode -> CanFail ()
 checkVarDef loc (Node nCtx eqs) =
@@ -105,14 +104,14 @@ checkVarDef loc (Node nCtx eqs) =
         then pure ()
         else foldMap undefError noDefVar
   where
-    defVar (SimpleEq x _) = Set.singleton x
-    defVar (FbyEq x _ _) = Set.singleton x
-    defVar (CallEq l _ _) = Set.fromList $ toList l
+    defVar (SimpleTEq x _) = Set.singleton x
+    defVar (FbyTEq x _ _) = Set.singleton x
+    defVar (CallTEq l _ _) = Set.fromList $ toList l
 
     undefError = varError loc "Undef" $ \x -> "The variable " <> x <> " is not defined."
 
 freeVars :: TExpr a -> Set VarId
-freeVars = freeVars' . unwrap
+freeVars = freeVars'
   where
     freeVars' (ConstantTExpr _ _) = Set.empty
     freeVars' (VarTExpr v _) = Set.singleton v
@@ -151,10 +150,10 @@ buildCausalityGraph :: TNode -> CausalityGraph
 buildCausalityGraph (Node _ eqs) =
   foldMap go eqs
   where
-    go (SimpleEq v expr) = Map.singleton v (freeVars expr)
-    go (FbyEq x initE _) = Map.singleton x (freeVars initE)
-    go (CallEq l _ args) =
-      let argsDeps = foldMap freeVars args
+    go (SimpleTEq v expr) = Map.singleton v (freeVars expr)
+    go (FbyTEq x initE _) = Map.singleton x (freeVars initE)
+    go (CallTEq l _ args) =
+      let argsDeps = Set.fromList args
        in Map.fromList $ (,argsDeps) <$> toList l
 
 dfs :: VarId -> DFS ()

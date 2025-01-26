@@ -3,34 +3,42 @@
 module Main (main) where
 
 import qualified Data.ByteString.Lazy as B
-import Data.Text.Lazy (Text)
+import Data.Maybe
+import Data.Text.Lazy (Text, unpack)
 import Data.Text.Lazy.Encoding (decodeUtf8)
 import Data.Text.Lazy.IO (writeFile)
-import ExportTyped (exportTyped)
 import LustreVerilog
 import Options.Applicative
+import Paths_LustreVerilog
 import System.Exit (ExitCode (..), exitWith)
 import Text.Pretty.Simple (pPrint)
 import Prelude hiding (writeFile)
 
-data Stage = ParsingStage | TypingStage | ExportNormalised | CompileStage
-  deriving (Show)
+data Action = GetStdLibDir | ParsingStage | TypingStage | CompileAst | CompileStage Text
 
 data CompilerOptions = CompilerOptions
-  { stage :: Stage,
+  { compilerAction :: Action,
     outputFile :: FilePath,
     debug :: Bool,
-    inputFile :: FilePath
+    intSize :: Int,
+    resetKind :: ResetKind,
+    inputFile :: Maybe FilePath
   }
-  deriving (Show)
 
 compilerOptionsParser :: Parser CompilerOptions
 compilerOptionsParser =
   CompilerOptions
-    <$> ( flag' ParsingStage (long "parse-only" <> help "Stop at parsing stage")
+    <$> ( flag' GetStdLibDir (long "stdlib-dir" <> help "Get stdlib directory")
+            <|> flag' ParsingStage (long "parse-only" <> help "Stop at parsing stage")
             <|> flag' TypingStage (long "type-only" <> help "Stop at typing stage")
-            <|> flag' ExportNormalised (long "export-normalised" <> help "Export the normalised input")
-            <|> pure CompileStage
+            <|> flag' CompileAst (long "export-compiled" <> help "Stop before exporting to Verilog")
+            <|> ( CompileStage
+                    <$> strOption
+                      ( long "main-node"
+                          <> metavar "NODE"
+                          <> help "Main node of the design"
+                      )
+                )
         )
     <*> strOption
       ( long "output"
@@ -38,10 +46,24 @@ compilerOptionsParser =
           <> metavar "FILE"
           <> help "Output target file"
           <> showDefault
-          <> value "a.out"
+          <> value "out.v"
       )
     <*> switch (long "debug" <> short 'd' <> help "Enable debug mode")
-    <*> argument str (metavar "FILE" <> help "Input source file to compile")
+    <*> option
+      auto
+      ( long "int-size"
+          <> metavar "INT-SIZE"
+          <> help "Bit size of a Lustre Integer"
+          <> showDefault
+          <> value 32
+      )
+    <*> ( flag' ActiveHigh (long "reset-low" <> help "Reset is active low")
+            <|> flag' ActiveLow (long "reset-high" <> help "Reset is active high")
+            <|> pure ActiveLow
+        )
+    <*> ( (Just <$> argument str (metavar "FILE" <> help "Input source file to compile"))
+            <|> pure Nothing
+        )
 
 main :: IO ()
 main = do
@@ -54,22 +76,31 @@ main = do
         (fullDesc <> progDesc "A simple Lustre to Verilog Compiler")
 
 runCompiler :: CompilerOptions -> IO ()
-runCompiler opts = do
-  (path, txt) <- readInputFile (inputFile opts)
-  ast <- parseInput path txt
-  tast <- typeInput path txt ast
-  case stage opts of
-    ParsingStage -> dumpIfDebug opts ast
-    TypingStage -> dumpIfDebug opts tast
-    ExportNormalised -> writeFile (outputFile opts) $ exportTyped tast
-    CompileStage -> writeFile (outputFile opts) $ compileInput tast
+runCompiler opts =
+  case compilerAction opts of
+    GetStdLibDir -> printStdLib
+    _ ->
+      let inFile = fromMaybe (error "missing input file.") $ inputFile opts
+       in do
+            (path, txt) <- readInputFile inFile
+            ast <- parseInput (intSize opts) path txt
+            tast <- typeInput path txt ast
+            case compilerAction opts of
+              ParsingStage -> dumpIfDebug opts ast
+              TypingStage -> dumpIfDebug opts tast
+              CompileAst -> pPrint $ transformAst tast
+              CompileStage mainModule ->
+                maybe (putStrLn $ "There is no node: " <> unpack mainModule) (writeFile $ outputFile opts) $ compileInput opts mainModule tast
+
+printStdLib :: IO ()
+printStdLib = getDataDir >>= putStrLn
 
 readInputFile :: String -> IO (String, Text)
 readInputFile "-" = ("stdin",) . decodeUtf8 <$> B.getContents
 readInputFile file = (file,) . decodeUtf8 <$> B.readFile file
 
-parseInput :: FilePath -> Text -> IO PAst
-parseInput path txt = case parseFile path txt of
+parseInput :: Int -> FilePath -> Text -> IO PAst
+parseInput defaultIntSize path txt = case parseFile defaultIntSize path txt of
   Left err -> putStrLn (errorBundlePretty err) >> exitWith (ExitFailure 2)
   Right ast -> return ast
 
@@ -81,5 +112,5 @@ typeInput path txt ast = case typeFile path txt ast of
   Left err -> putStrLn (errorBundlePretty err) >> exitWith (ExitFailure 3)
   Right tast -> return tast
 
-compileInput :: TAst -> Text
-compileInput = error "Not Implemented"
+compileInput :: CompilerOptions -> Text -> TAst -> Maybe Text
+compileInput opt mainMod = toVerilog (resetKind opt) mainMod . transformAst

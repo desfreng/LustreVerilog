@@ -37,3 +37,9 @@ cabal-dev/
 .stamp.verilate
 *.vcd
 obj_dir/
+
+# -- Heptagon
+*_c/
+*.epci
+*.mls
+*.obc

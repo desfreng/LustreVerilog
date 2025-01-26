@@ -21,9 +21,9 @@ import Commons.Ids
 import Commons.Position
 import Commons.Types
 import Commons.TypingError
+import Control.Monad (zipWithM_)
 import Control.Monad.Reader
 import Control.Monad.State
-import qualified Data.Foldable as Set
 import Data.Functor
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
@@ -42,7 +42,7 @@ type TCandEq = TEquation TypeCand
 findNode :: Pos Ident -> ExprEnv (CanFail (NodeIdent, NodeSignature))
 findNode nodeName = ExprEnv $ asks (findNode' . fst)
   where
-    nodeId = NodeIdent nodeName
+    nodeId = NodeIdent $ unwrap nodeName
     findNode' ns =
       case Map.lookup nodeId ns of
         Just sig -> (nodeId,) <$> sig
@@ -108,22 +108,25 @@ addEq eq = ExprEnv . modify $ \s -> s {sideEqs = eq : sideEqs s}
 buildIfCondEq :: (VarIdent, TExpr TypeCand, TypeCand) -> ExprEnv VarId
 buildIfCondEq (varOrig, expr, _) = do
   vId <- freshVar (VarIfCondition varOrig) (WithType TBool)
-  () <- addEq (SimpleEq vId expr)
+  () <- addEq (SimpleTEq vId expr)
   return vId
 
 buildFbyEq :: VarIdent -> TExpr TypeCand -> TExpr TypeCand -> TypeCand -> ExprEnv VarId
 buildFbyEq varOrig initFby nextFby typeCand = do
   vId <- freshVar (VarFbyDefinition varOrig) (DerivingFrom typeCand)
-  () <- addEq (FbyEq vId initFby nextFby)
+  () <- addEq (FbyTEq vId initFby nextFby)
   return vId
 
 buildCallEq :: (NodeIdent, NodeSignature) -> [TExpr TypeCand] -> ExprEnv (NonEmpty (VarId, AtomicTType))
 buildCallEq (nodeId, nodeSig) args = do
-  varIds <- mapM freshVarFromTyp (outputType nodeSig)
-  () <- addEq (CallEq (fst <$> varIds) nodeId args)
-  return varIds
+  outVarsIds <- mapM freshOutVarFromTyp (outputType nodeSig)
+  inVarsIds <- fmap fst <$> mapM freshInVarFromTyp (inputTypes nodeSig)
+  _ <- zipWithM_ (\v e -> addEq $ SimpleTEq v e) inVarsIds args
+  () <- addEq (CallTEq (fst <$> outVarsIds) nodeId inVarsIds)
+  return outVarsIds
   where
-    freshVarFromTyp t = freshVar (OutputCallVar nodeId) (WithType t) <&> (,t)
+    freshOutVarFromTyp t = freshVar (OutputCallVar nodeId) (WithType t) <&> (,t)
+    freshInVarFromTyp (_, t) = freshVar (InputCallVar nodeId) (WithType t) <&> (,t)
 
 runExprEnv :: NodeEnvironment VarIdent -> ExprEnv (CanFail (NonEmpty TCandEq)) -> NodeEnv (CanFail TNode)
 runExprEnv nodeEnv m = toNodeEnv (runExprEnv' nodeEnv m)
@@ -139,25 +142,10 @@ runExprEnv' nodeEnv (ExprEnv m) ns = Node <$> newNodeEnv <*> sanitizedEqs
 
     buildNewEnv typSt nCtx =
       let (newLocals, newVarTypes) = Map.foldMapWithKey (fromFreshVars typSt) (varsInfo s)
-          oldLocals = Set.foldMap (Set.singleton . FromIdent) (nodeLocal nCtx)
-          convertOldBinding varIdent aTyp = Map.singleton (FromIdent varIdent) aTyp
-          oldVarTypes = Map.foldMapWithKey convertOldBinding (nodeVarTypes nCtx)
-       in nCtx {nodeLocal = oldLocals <> newLocals, nodeVarTypes = oldVarTypes <> newVarTypes}
+       in newContext nCtx FromIdent newLocals newVarTypes
 
     fromFreshVars :: Map TypeCand AtomicTType -> VarId -> VarInfo -> (Set VarId, Map VarId AtomicTType)
     fromFreshVars _ vId (WithType aTyp) = (Set.singleton vId, Map.singleton vId aTyp)
     fromFreshVars typSt vId (DerivingFrom tCand) = (Set.singleton vId, Map.singleton vId (typSt ! tCand))
 
-    sanitizeEq typSt (SimpleEq vId e) = SimpleEq vId $ sExpr typSt e
-    sanitizeEq typSt (FbyEq vId initFby nextFby) = FbyEq vId (sExpr typSt initFby) $ sExpr typSt nextFby
-    sanitizeEq typSt (CallEq vIds nId args) = CallEq vIds nId $ sExpr typSt <$> args
-
-    sExpr typSt = fmap (sExprDesc typSt)
-
-    sExprDesc :: Map TypeCand AtomicTType -> TExprKind TypeCand -> TExprKind AtomicTType
-    sExprDesc typSt (ConstantTExpr c aT) = ConstantTExpr c $ typSt ! aT
-    sExprDesc typSt (VarTExpr vId aT) = VarTExpr vId $ typSt ! aT
-    sExprDesc typSt (UnOpTExpr op e aT) = UnOpTExpr op (sExpr typSt e) $ typSt ! aT
-    sExprDesc typSt (BinOpTExpr op lhs rhs aT) = BinOpTExpr op (sExpr typSt lhs) (sExpr typSt rhs) $ typSt ! aT
-    sExprDesc typSt (IfTExpr ifVar ifTrue ifFalse ifTyp) =
-      IfTExpr ifVar (sExpr typSt ifTrue) (sExpr typSt ifFalse) $ typSt ! ifTyp
+    sanitizeEq typSt eq = fmap (typSt !) eq
