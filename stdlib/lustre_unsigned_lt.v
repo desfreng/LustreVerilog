@@ -7,6 +7,7 @@ module lustre_unsigned_lt #(
     input wire [N-1:0] rhs,
     output wire res
 );
+  wire flag_C;
   wire [N-1:0] new_rhs;
   not (new_rhs, rhs);
 
@@ -19,7 +20,8 @@ module lustre_unsigned_lt #(
       .res(),
       .flag_Z(),
       .flag_N(),
-      .flag_C(res),
+      .flag_C(flag_C),
       .flag_V()
   );
+  not (res, flag_C);
 endmodule

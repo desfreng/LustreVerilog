@@ -118,6 +118,9 @@ freeVars = freeVars'
     freeVars' (UnOpTExpr _ arg _) = freeVars arg
     freeVars' (BinOpTExpr _ lhs rhs _) = freeVars lhs `Set.union` freeVars rhs
     freeVars' (IfTExpr cond tb fb _) = Set.singleton cond `Set.union` freeVars tb `Set.union` freeVars fb
+    freeVars' (ConcatTExpr lhs rhs _) = freeVars lhs `Set.union` freeVars rhs
+    freeVars' (SliceTExpr arg _ _) = freeVars arg
+    freeVars' (SelectTExpr arg _ _) = freeVars arg
 
 type CausalityGraph = Map VarId (Set VarId)
 

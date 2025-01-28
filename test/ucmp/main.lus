@@ -1,0 +1,9 @@
+node main(x, y: u8) returns (eq, neq, lt, le, gt, ge: bool);
+let
+    eq = x == y;
+    neq = x <> y;
+    lt = x < y;
+    le = x <= y;
+    ge = x >= y;
+    gt = x > y;
+tel

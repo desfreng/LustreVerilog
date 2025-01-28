@@ -5,7 +5,7 @@ module Typing.Ast where
 
 import Commons.Ast (Ast, BinOp, Constant, Node, UnOp)
 import Commons.Ids (NodeIdent, VarId)
-import Commons.Types (AtomicTType)
+import Commons.Types (AtomicTType, BVSize)
 import Data.List.NonEmpty (NonEmpty)
 
 -- | A Typed Expression in a Lustre Program
@@ -20,6 +20,12 @@ data TExpr atyp
     BinOpTExpr BinOp (TExpr atyp) (TExpr atyp) atyp
   | -- | Conditional Expression: @if c then a else b@
     IfTExpr {ifCond :: VarId, ifTrue :: (TExpr atyp), ifFalse :: (TExpr atyp), ifTyp :: atyp}
+  | -- | Concat Expression: @a ++ b@
+    ConcatTExpr (TExpr atyp) (TExpr atyp) atyp
+  | -- | Slice Expression: @a[1:3]@
+    SliceTExpr (TExpr atyp) (BVSize, BVSize) atyp
+  | -- | Select Expression: @a[1]@
+    SelectTExpr (TExpr atyp) BVSize atyp
   deriving (Show)
 
 data TEquation atyp
@@ -43,6 +49,9 @@ exprType (VarTExpr _ t) = t
 exprType (UnOpTExpr _ _ t) = t
 exprType (BinOpTExpr _ _ _ t) = t
 exprType (IfTExpr _ _ _ t) = t
+exprType (ConcatTExpr _ _ t) = t
+exprType (SliceTExpr _ _ t) = t
+exprType (SelectTExpr _ _ t) = t
 
 instance Foldable TExpr where
   foldMap :: (Monoid m) => (a -> m) -> TExpr a -> m
@@ -55,6 +64,9 @@ instance Functor TExpr where
   fmap f (UnOpTExpr op arg typ) = UnOpTExpr op (fmap f arg) $ f typ
   fmap f (BinOpTExpr op lhs rhs typ) = BinOpTExpr op (fmap f lhs) (fmap f rhs) $ f typ
   fmap f (IfTExpr {ifCond, ifTrue, ifFalse, ifTyp}) = IfTExpr ifCond (fmap f ifTrue) (fmap f ifFalse) $ f ifTyp
+  fmap f (ConcatTExpr lhs rhs typ) = ConcatTExpr (fmap f lhs) (fmap f rhs) $ f typ
+  fmap f (SliceTExpr arg i typ) = SliceTExpr (fmap f arg) i $ f typ
+  fmap f (SelectTExpr arg i typ) = SelectTExpr (fmap f arg) i $ f typ
 
 instance Traversable TExpr where
   traverse :: (Applicative f) => (a -> f b) -> TExpr a -> f (TExpr b)
@@ -64,6 +76,9 @@ instance Traversable TExpr where
   traverse f (BinOpTExpr op lhs rhs typ) = BinOpTExpr op <$> traverse f lhs <*> traverse f rhs <*> f typ
   traverse f (IfTExpr {ifCond, ifTrue, ifFalse, ifTyp}) =
     IfTExpr ifCond <$> traverse f ifTrue <*> traverse f ifFalse <*> f ifTyp
+  traverse f (ConcatTExpr lhs rhs typ) = ConcatTExpr <$> traverse f lhs <*> traverse f rhs <*> f typ
+  traverse f (SliceTExpr arg i typ) = SliceTExpr <$> traverse f arg <*> pure i <*> f typ
+  traverse f (SelectTExpr arg i typ) = SelectTExpr <$> traverse f arg <*> pure i <*> f typ
 
 instance Foldable TEquation where
   foldMap :: (Monoid m) => (a -> m) -> TEquation a -> m

@@ -1,0 +1,4 @@
+node main(x: r8) returns (res: bool);
+let
+    res = x[2];
+tel

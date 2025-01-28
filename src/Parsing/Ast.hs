@@ -24,6 +24,9 @@ data ExprDesc
   | IdentExpr (Pos Ident)
   | UnOpExpr UnOp Expr
   | BinOpExpr BinOp Expr Expr
+  | ConcatExpr Expr Expr
+  | SliceExpr Expr (Int, Int)
+  | SelectExpr Expr Int
   | AppExpr (Pos Ident) [Expr]
   | TupleExpr (BiList Expr)
   | IfExpr {ifCond :: Expr, ifTrue :: Expr, ifFalse :: Expr}

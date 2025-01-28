@@ -1,0 +1,4 @@
+node main(x: r8) returns (res: r5);
+let
+    res = x[1:6];
+tel

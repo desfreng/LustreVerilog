@@ -9,6 +9,7 @@ module Typing.TypeUnification
     runUnifier,
     unifyTypeCand,
     showTypeCand,
+    getFixedSize,
     -- TypeCand
     TypeCand (),
     constantTypeCand,
@@ -296,6 +297,18 @@ checkExpectedType err typ t = do
       if tId1 == tId2
         then fmap (Custom tId1) . sequenceA <$> Monad.zipWithM (checkExpectedType err) args1 args2
         else reportErr r
+
+getFixedSize :: Pos a -> TypeCand -> TypeUnifier (CanFail BVSize)
+getFixedSize err t = do
+  v <- unfoldVal t
+  case v of
+    Nothing -> reportErr
+    Just (BitVector _ x) -> return $ pure x
+    Just (Bool) -> return . pure $ BVSize 1
+    Just (Numeric _ _ _) -> reportErr
+    Just (Custom _ _) -> reportErr
+  where
+    reportErr = reportError err <$> "The type candidate " <> showId t <> " does not have a fixed size."
 
 checkExpected :: Pos a -> ExpectedType -> TypeCand -> TypeUnifier (CanFail TypeCand)
 checkExpected loc (EList expL) = checkExpectedList loc expL

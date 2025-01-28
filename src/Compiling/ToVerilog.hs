@@ -88,6 +88,18 @@ exprToVerilog ctrlArgs nCtx (SimpleCEq v (IfCAct cond tB fB)) =
   let argSize = getVarSize nCtx v
       modArgs = [encodeIdent cond, encodeIdent tB, encodeIdent fB]
    in InstExpr $ ModuleInst (Base IfModule) [FixedValue argSize] ctrlArgs modArgs (encodeIdent v :| [])
+exprToVerilog ctrlArgs nCtx (SimpleCEq v (ConcatCAct fstArg sndArg)) =
+  let staticArgs = [FixedValue $ getVarSize nCtx fstArg, FixedValue $ getVarSize nCtx sndArg]
+      modArgs = [encodeIdent fstArg, encodeIdent sndArg]
+   in InstExpr $ ModuleInst (Base ConcatModule) staticArgs ctrlArgs modArgs (encodeIdent v :| [])
+exprToVerilog ctrlArgs nCtx (SimpleCEq v (SliceCAct arg (fstIndex, sndIndex))) =
+  let staticArgs = [FixedValue $ getVarSize nCtx arg, FixedValue fstIndex, FixedValue sndIndex]
+      modArgs = [encodeIdent arg]
+   in InstExpr $ ModuleInst (Base SliceModule) staticArgs ctrlArgs modArgs (encodeIdent v :| [])
+exprToVerilog ctrlArgs nCtx (SimpleCEq v (SelectCAct arg index)) =
+  let staticArgs = [FixedValue $ getVarSize nCtx arg, FixedValue index]
+      modArgs = [encodeIdent arg]
+   in InstExpr $ ModuleInst (Base SelectModule) staticArgs ctrlArgs modArgs (encodeIdent v :| [])
 exprToVerilog ctrlArgs nCtx (SimpleCEq v (FbyCAct initVar nextVar)) =
   let argSize = getVarSize nCtx v
       modArgs = [encodeIdent initVar, encodeIdent nextVar]

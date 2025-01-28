@@ -4,7 +4,7 @@
 #include <verilated.h>
 #include <verilated_vcd_c.h>
 
-#include "Vand.h"
+#include "Vslice.h"
 
 #ifndef WAVEFORM_FILE
 #define WAVEFORM_FILE "waveform.vcd"
@@ -17,7 +17,7 @@ int main(int argc, char **argv, char **env) {
   Verilated::commandArgs(argc, argv);
 
   vluint64_t sim_time = 0;
-  Vand dut = Vand();
+  Vslice dut = Vslice();
 
   Verilated::traceEverOn(true);
   VerilatedVcdC trace = VerilatedVcdC();
@@ -32,17 +32,16 @@ int main(int argc, char **argv, char **env) {
 
   for (size_t i = 0; i < SIM_TIME; i++) {
     const uint8_t x = dist(rd);
-    const uint8_t y = dist(rd);
+    const uint16_t res = (x >> 1) & 0b11111;
 
     dut.clock = 1;
     dut.var_x = x;
-    dut.var_y = y;
 
     dut.eval();
     trace.dump(2 * i);
 
-    if (dut.var_res != (x & y)) {
-      std::cerr << "Error at cycle " << i << " (expected: " << (int)(x & y)
+    if (dut.var_res != res) {
+      std::cerr << "Error at cycle " << i << " (expected: " << (int)(res)
                 << " found: " << (int)(dut.var_res) << ")" << std::endl;
     }
 

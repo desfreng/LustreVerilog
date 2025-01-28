@@ -46,6 +46,10 @@ data CVar
   | BinOpArg BinOp VarId Int
   | IfTrueBranch VarId Int
   | IfFalseBranch VarId Int
+  | ConcatFirst VarId Int
+  | ConcatSecond VarId Int
+  | SliceArg VarId Int
+  | SelectArg VarId Int
   deriving (Eq, Ord)
 
 data CAction
@@ -61,6 +65,12 @@ data CAction
     IfCAct {ifCond :: VarId, ifTrue :: CVar, ifFalse :: CVar}
   | -- | Fby Action: @a fby b@
     FbyCAct {initVar :: CVar, nextVar :: CVar}
+  | -- | Concat Expression: @a ++ b@
+    ConcatCAct CVar CVar
+  | -- | Slice Expression: @a[1:3]@
+    SliceCAct CVar (BVSize, BVSize)
+  | -- | Select Expression: @a[1]@
+    SelectCAct CVar BVSize
   deriving (Show)
 
 data CEquation
@@ -84,6 +94,10 @@ instance Show CVar where
   show (BinOpArg op varId cVarId) = varIdPrefix varId <> "_" <> show op <> "_" <> show cVarId
   show (IfTrueBranch varId cVarId) = varIdPrefix varId <> "_true_" <> show cVarId
   show (IfFalseBranch varId cVarId) = varIdPrefix varId <> "_false_" <> show cVarId
+  show (ConcatFirst varId cVarId) = varIdPrefix varId <> "_concat_fst_" <> show cVarId
+  show (ConcatSecond varId cVarId) = varIdPrefix varId <> "_concat_snd_" <> show cVarId
+  show (SliceArg varId cVarId) = varIdPrefix varId <> "_sliced_" <> show cVarId
+  show (SelectArg varId cVarId) = varIdPrefix varId <> "_selected_" <> show cVarId
 
 instance Show CConstant where
   show :: CConstant -> String

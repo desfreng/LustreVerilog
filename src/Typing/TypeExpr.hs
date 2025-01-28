@@ -47,6 +47,9 @@ typeExpr typ e = typeExpr' (unwrap e)
     typeExpr' (AppExpr n args) = typeAppExpr e typ n args
     typeExpr' (TupleExpr l) = typeTupleExpr e typ l
     typeExpr' (FbyExpr arg arg') = typeFbyExpr e typ arg arg'
+    typeExpr' (ConcatExpr lhs rhs) = concatExpr e typ lhs rhs
+    typeExpr' (SliceExpr arg i) = sliceExpr e typ arg i
+    typeExpr' (SelectExpr arg i) = selectExpr e typ arg i
 
 invalidTypeForExpr :: Pos a -> EqRHS -> CanFail b
 invalidTypeForExpr loc eTyp = reportError loc $ "This expression does not have the type " <> show eTyp <> "."
@@ -66,6 +69,18 @@ unOpExpr loc (TreeLeaf typ) op arg = fmap TreeLeaf <$> typeUnOpExpr loc typ op a
 binOpExpr :: Pos a -> EqRHS -> BinOp -> Expr -> Expr -> ExprEnv (CanFail ExprCand)
 binOpExpr loc rhs@(TreeNode _) _ _ _ = return $ invalidTypeForExpr loc rhs
 binOpExpr loc (TreeLeaf typ) op lhs rhs = fmap TreeLeaf <$> typeBinOpExpr loc typ op lhs rhs
+
+concatExpr :: Pos a -> EqRHS -> Expr -> Expr -> ExprEnv (CanFail ExprCand)
+concatExpr loc rhs@(TreeNode _) _ _ = return $ invalidTypeForExpr loc rhs
+concatExpr loc (TreeLeaf typ) lhs rhs = fmap TreeLeaf <$> typeConcatExpr loc typ lhs rhs
+
+sliceExpr :: Pos a -> EqRHS -> Expr -> (Int, Int) -> ExprEnv (CanFail ExprCand)
+sliceExpr loc rhs@(TreeNode _) _ _ = return $ invalidTypeForExpr loc rhs
+sliceExpr loc (TreeLeaf typ) arg index = fmap TreeLeaf <$> typeSliceExpr loc typ arg index
+
+selectExpr :: Pos a -> EqRHS -> Expr -> Int -> ExprEnv (CanFail ExprCand)
+selectExpr loc rhs@(TreeNode _) _ _ = return $ invalidTypeForExpr loc rhs
+selectExpr loc (TreeLeaf typ) arg index = fmap TreeLeaf <$> typeSelectExpr loc typ arg index
 
 buildAndUnify :: Pos a -> EqRHS -> Tree (TExpr TypeCand) -> ExprEnv (CanFail ExprCand)
 buildAndUnify loc lhs rhs = do

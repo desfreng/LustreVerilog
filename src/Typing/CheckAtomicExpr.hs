@@ -7,6 +7,9 @@ module Typing.CheckAtomicExpr
     typeIdentExpr,
     typeUnOpExpr,
     typeBinOpExpr,
+    typeConcatExpr,
+    typeSelectExpr,
+    typeSliceExpr,
     checkCall,
   )
 where
@@ -26,7 +29,25 @@ import Typing.TypeUnification
 
 type AtomExprCand = (VarIdent, TExpr TypeCand, TypeCand)
 
+getTypeCand :: AtomExprCand -> TypeCand
+getTypeCand (_, _, x) = x
+
 type TypeConstraint = (VarIdent, ExpectedType)
+
+boolOrRaw :: VarIdent -> TypeConstraint
+boolOrRaw var = (var, toAtom $ expectBool <> expectBitVector Raw)
+
+sig :: VarIdent -> TypeConstraint
+sig var = (var, toAtom $ expectBitVector Signed)
+
+raw :: VarIdent -> TypeConstraint
+raw var = (var, toAtom $ expectBitVector Raw)
+
+sigOrUnsig :: VarIdent -> TypeConstraint
+sigOrUnsig var = (var, toAtom $ expectBitVector Unsigned <> expectBitVector Signed)
+
+rawSigOrUnsig :: VarIdent -> TypeConstraint
+rawSigOrUnsig var = (var, toAtom $ expectBitVector Raw <> expectBitVector Unsigned <> expectBitVector Signed)
 
 invalidTypeForExpr :: Pos a -> TypeConstraint -> CanFail b
 invalidTypeForExpr loc eTyp = reportError loc $ "This expression does not have the type " <> show eTyp <> "."
@@ -42,6 +63,9 @@ expectAtomicType typ e = typeAtomicExpr' (unwrap e)
     typeAtomicExpr' (AppExpr n args) = typeAtomicAppExpr e typ n args
     typeAtomicExpr' (TupleExpr _) = return $ invalidTypeForExpr e typ
     typeAtomicExpr' (FbyExpr arg arg') = typeAtomicFbyExpr e typ arg arg'
+    typeAtomicExpr' (ConcatExpr lhs rhs) = typeConcatExpr e typ lhs rhs
+    typeAtomicExpr' (SliceExpr arg i) = typeSliceExpr e typ arg i
+    typeAtomicExpr' (SelectExpr arg i) = typeSelectExpr e typ arg i
 
 buildAndUnify :: Pos a -> TypeConstraint -> TExpr TypeCand -> ExprEnv (CanFail AtomExprCand)
 buildAndUnify loc (var, typ) tExpr =
@@ -61,8 +85,8 @@ typeIdentExpr loc typ var = findVariable var >>= collapseA . fmap buildIdent
 typeUnOpExpr :: Pos a -> TypeConstraint -> UnOp -> Expr -> ExprEnv (CanFail AtomExprCand)
 typeUnOpExpr loc typ@(var, _) op arg =
   case op of
-    UnNot -> expectAtomicType (var, toAtom expectBool) arg >>= collapseA . fmap buildNot
-    UnNeg -> expectAtomicType (var, toAtom $ expectBitVector Signed) arg >>= collapseA . fmap buildNeg
+    UnNot -> expectAtomicType (boolOrRaw var) arg >>= collapseA . fmap buildNot
+    UnNeg -> expectAtomicType (sig var) arg >>= collapseA . fmap buildNeg
   where
     buildNot (_, targ, aT) = buildAndUnify loc typ (UnOpTExpr UnNot targ aT)
     buildNeg (_, targ, aT) = buildAndUnify loc typ (UnOpTExpr UnNeg targ aT)
@@ -77,34 +101,30 @@ typeBinOpExpr loc typ@(var, _) op lhs rhs =
     BinGt -> intCmpOp
     BinGe -> intCmpOp
     BinAdd -> do
-      tLhs <- expectAtomicType sigOrUnsig lhs
-      tRhs <- expectAtomicType sigOrUnsig rhs
+      tLhs <- expectAtomicType (sigOrUnsig var) lhs
+      tRhs <- expectAtomicType (sigOrUnsig var) rhs
       collapseA $ buildBVOp <$> tLhs <*> tRhs
     BinSub -> do
-      tLhs <- expectAtomicType sig lhs
-      tRhs <- expectAtomicType sig rhs
+      tLhs <- expectAtomicType (sig var) lhs
+      tRhs <- expectAtomicType (sig var) rhs
       collapseA $ buildBVOp <$> tLhs <*> tRhs
     BinAnd -> boolOp
     BinOr -> boolOp
   where
-    sig = (var, toAtom $ expectBitVector Signed)
-    sigOrUnsig = (var, toAtom $ expectBitVector Unsigned <> expectBitVector Signed)
-    rawSigOrUnsig = (var, toAtom $ expectBitVector Raw <> expectBitVector Unsigned <> expectBitVector Signed)
-
     intEqOp = do
-      tLhs <- expectAtomicType rawSigOrUnsig lhs
-      tRhs <- expectAtomicType rawSigOrUnsig rhs
+      tLhs <- expectAtomicType (rawSigOrUnsig var) lhs
+      tRhs <- expectAtomicType (rawSigOrUnsig var) rhs
       collapseA $ buildBoolOp <$> tLhs <*> tRhs
 
     intCmpOp = do
-      tLhs <- expectAtomicType sigOrUnsig lhs
-      tRhs <- expectAtomicType sigOrUnsig rhs
+      tLhs <- expectAtomicType (sigOrUnsig var) lhs
+      tRhs <- expectAtomicType (sigOrUnsig var) rhs
       collapseA $ buildBoolOp <$> tLhs <*> tRhs
 
     boolOp = do
-      tLhs <- expectAtomicType (var, toAtom expectBool) lhs
-      tRhs <- expectAtomicType (var, toAtom expectBool) rhs
-      collapseA $ buildBoolOp <$> tLhs <*> tRhs
+      tLhs <- expectAtomicType (boolOrRaw var) lhs
+      tRhs <- expectAtomicType (boolOrRaw var) rhs
+      collapseA $ buildBVOp <$> tLhs <*> tRhs
 
     buildBoolOp (_, tLhs, lhsTyp) (_, tRhs, rhsTyp) =
       unifToExpr (unifyTypeCand loc lhsTyp rhsTyp)
@@ -114,6 +134,19 @@ typeBinOpExpr loc typ@(var, _) op lhs rhs =
     buildBVOp (_, tLhs, lhsTyp) (_, tRhs, rhsTyp) =
       unifToExpr (unifyTypeCand loc lhsTyp rhsTyp)
         >>= collapseA . fmap (buildAndUnify loc typ . BinOpTExpr op tLhs tRhs)
+
+typeConcatExpr :: Pos a -> TypeConstraint -> Expr -> Expr -> ExprEnv (CanFail AtomExprCand)
+typeConcatExpr loc typ@(var, _) lhs rhs = do
+  tLhs <- expectAtomicType (raw var) lhs
+  tRhs <- expectAtomicType (raw var) rhs
+  tLhsSize <- unifToExpr . collapseA $ getFixedSize lhs . getTypeCand <$> tLhs
+  tRhsSize <- unifToExpr . collapseA $ getFixedSize rhs . getTypeCand <$> tRhs
+  collapseA $ buildConcat <$> tLhsSize <*> tRhsSize <*> tLhs <*> tRhs
+  where
+    buildConcat (BVSize lhsSize) (BVSize rhsSize) (_, tLhs, _) (_, tRhs, _) =
+      let size = BVSize $ lhsSize + rhsSize
+       in unifToExpr (fromAtomicType loc . TBitVector Raw $ size)
+            >>= buildAndUnify loc typ . ConcatTExpr tLhs tRhs
 
 typeAtomicIfExpr :: Pos a -> TypeConstraint -> Expr -> Expr -> Expr -> ExprEnv (CanFail AtomExprCand)
 typeAtomicIfExpr loc typ@(var, _) cond tb fb = do
@@ -177,3 +210,33 @@ typeAtomicFbyExpr loc typ initE nextE = do
       tCand <- unifToExpr (unifyTypeCand loc typeTrue typeFalse)
       fbyVar <- embed $ buildFbyEq v tTrue tFalse <$> tCand
       collapseA $ buildAndUnify loc typ <$> (VarTExpr <$> fbyVar <*> tCand)
+
+typeSliceExpr :: Pos a -> TypeConstraint -> Expr -> (Int, Int) -> ExprEnv (CanFail AtomExprCand)
+typeSliceExpr loc typ@(var, _) arg (i, j) = do
+  tArg <- expectAtomicType (raw var) arg
+  tArgSize <- unifToExpr . collapseA $ getFixedSize arg . getTypeCand <$> tArg
+  collapseA $ buildSlice <$> tArgSize <*> tArg
+  where
+    buildSlice (BVSize busSize) (_, tArg, _) =
+      if (0 <= i) && (i < j)
+        then
+          if j > busSize
+            then return $ reportError loc $ "The slice window is too large. The argument has " <> show busSize <> " buses."
+            else
+              unifToExpr (fromAtomicType loc . TBitVector Raw . BVSize $ j - i)
+                >>= buildAndUnify loc typ . SliceTExpr tArg (BVSize i, BVSize j)
+        else return $ reportError loc $ "Ill formed slice."
+
+typeSelectExpr :: Pos a -> TypeConstraint -> Expr -> Int -> ExprEnv (CanFail AtomExprCand)
+typeSelectExpr loc typ@(var, _) arg index = do
+  tArg <- expectAtomicType (raw var) arg
+  tArgSize <- unifToExpr . collapseA $ getFixedSize arg . getTypeCand <$> tArg
+  collapseA $ buildSelect <$> tArgSize <*> tArg
+  where
+    buildSelect (BVSize busSize) (_, tArg, _) =
+      if (index < busSize) && (index >= 0)
+        then
+          unifToExpr (fromAtomicType loc TBool)
+            >>= buildAndUnify loc typ . SelectTExpr tArg (BVSize index)
+        else
+          return $ reportError loc $ "Select bus does not exists. The argument has " <> show busSize <> " buses."

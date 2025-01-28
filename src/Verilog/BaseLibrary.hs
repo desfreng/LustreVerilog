@@ -44,6 +44,9 @@ buildModule (UnOpModule op@CUnNeg) = buildUnOpModules (UnOpModule op) Signed
 buildModule (BinOpModule op) = binOpModules op
 buildModule FbyModule = fbyModule
 buildModule IfModule = ifModule
+buildModule ConcatModule = concatModule
+buildModule SliceModule = sliceModule
+buildModule SelectModule = selectModule
 
 buildUnOpModules :: BaseModule -> VarType -> (ModuleHead, ModuleImport)
 buildUnOpModules name kind = (moduleHead, show name <> base_suffix)
@@ -133,4 +136,57 @@ ifModule = (moduleHead, show IfModule <> base_suffix)
               WireDecl Unsigned (VariableSize size) $ Ident "false_branch"
             ],
           outputVars = NonEmpty.singleton $ WireDecl Unsigned (VariableSize size) $ Ident "res"
+        }
+
+concatModule :: (ModuleHead, ModuleImport)
+concatModule = (moduleHead, show ConcatModule <> base_suffix)
+  where
+    lhsSize = Ident "M"
+    rhsSize = Ident "N"
+
+    moduleHead =
+      ModuleHead
+        { moduleName = Base ConcatModule,
+          staticVars = [StaticDecl lhsSize (Just $ BVSize 1), StaticDecl rhsSize (Just $ BVSize 1)],
+          controlVars = Nothing,
+          inputVars =
+            [ WireDecl Unsigned (VariableSize lhsSize) $ Ident "lhs",
+              WireDecl Unsigned (VariableSize rhsSize) $ Ident "rhs"
+            ],
+          outputVars = NonEmpty.singleton $ WireDecl Unsigned (SumSize lhsSize rhsSize) $ Ident "res"
+        }
+
+sliceModule :: (ModuleHead, ModuleImport)
+sliceModule = (moduleHead, show SliceModule <> base_suffix)
+  where
+    size = Ident "N"
+    fstIndex = Ident "I"
+    sndIndex = Ident "J"
+
+    moduleHead =
+      ModuleHead
+        { moduleName = Base SliceModule,
+          staticVars =
+            [ StaticDecl size (Just $ BVSize 1),
+              StaticDecl fstIndex (Just $ BVSize 0),
+              StaticDecl sndIndex (Just $ BVSize 1)
+            ],
+          controlVars = Nothing,
+          inputVars = [WireDecl Unsigned (VariableSize size) $ Ident "arg"],
+          outputVars = NonEmpty.singleton $ WireDecl Unsigned (DeltaSize fstIndex sndIndex) $ Ident "res"
+        }
+
+selectModule :: (ModuleHead, ModuleImport)
+selectModule = (moduleHead, show SelectModule <> base_suffix)
+  where
+    size = Ident "N"
+    arg = Ident "I"
+
+    moduleHead =
+      ModuleHead
+        { moduleName = Base SelectModule,
+          staticVars = [StaticDecl size (Just $ BVSize 1), StaticDecl arg (Just $ BVSize 0)],
+          controlVars = Nothing,
+          inputVars = [WireDecl Unsigned (VariableSize size) $ Ident "arg"],
+          outputVars = NonEmpty.singleton $ WireDecl Unsigned (FixedSize $ BVSize 1) $ Ident "res"
         }

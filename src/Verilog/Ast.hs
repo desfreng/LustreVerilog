@@ -25,6 +25,9 @@ data BaseModule
   | BinOpModule CBinOp
   | FbyModule
   | IfModule
+  | ConcatModule
+  | SliceModule
+  | SelectModule
   deriving (Eq, Ord)
 
 data ModuleName
@@ -57,7 +60,7 @@ data Expr
 data VarType = Signed | Unsigned
   deriving (Show)
 
-data VarSize = FixedSize BVSize | VariableSize Ident
+data VarSize = FixedSize BVSize | VariableSize Ident | DeltaSize Ident Ident | SumSize Ident Ident
   deriving (Show)
 
 data VarDecl = WireDecl VarType VarSize Ident
@@ -108,10 +111,15 @@ instance Pretty VarType where
 
 instance Show BaseModule where
   show :: BaseModule -> String
-  show (UnOpModule op) = "lustre_" <> show op
-  show (BinOpModule op) = "lustre_" <> show op
-  show FbyModule = "lustre_fby"
-  show IfModule = "lustre_if"
+  show x =
+    "lustre_" <> case x of
+      (UnOpModule op) -> show op
+      (BinOpModule op) -> show op
+      FbyModule -> "fby"
+      IfModule -> "if"
+      ConcatModule -> "concat"
+      SliceModule -> "slice"
+      SelectModule -> "select"
 
 instance Pretty VarDecl where
   pretty :: VarDecl -> Doc ann
@@ -137,6 +145,8 @@ prettyVarSize :: VarSize -> Maybe (Doc ann)
 prettyVarSize (FixedSize (BVSize 1)) = Nothing
 prettyVarSize (FixedSize (BVSize size)) = Just . brackets $ unsafeViaShow (size - 1) <> ":0"
 prettyVarSize (VariableSize size) = Just . brackets $ pretty size <> "-1:0"
+prettyVarSize (DeltaSize fstIndex sndIndex) = Just . brackets $ "(" <> pretty sndIndex <> "-" <> pretty fstIndex <> ":0"
+prettyVarSize (SumSize x y) = Just . brackets $ "(" <> pretty x <> "+" <> pretty y <> ")-1:0"
 
 prettyVarDecl :: VarType -> VarSize -> Ident -> Doc ann
 prettyVarDecl kind size name =

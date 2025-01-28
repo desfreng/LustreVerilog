@@ -198,7 +198,7 @@ moduleInst m ModuleInst {name, staticArgs, controlArgs, inArgs, outArgs} =
       callArgs = punctuate "," $ callControlArgs <> callInArgs <> toList callOutArgs
       static = case callStatic of
         [] -> emptyDoc
-        l -> "#(" <> hardline <> indent 4 (vsep l) <> hardline <> ")" <> space
+        l -> "#(" <> hardline <> indent 4 (vsep $ punctuate "," l) <> hardline <> ")" <> space
    in do
         iId <- freshId
         return $

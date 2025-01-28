@@ -62,38 +62,42 @@ transformExpr :: VarId -> TExpr AtomicTType -> TransformMonad CAction
 transformExpr _ (ConstantTExpr cst typ) = return $ ConstantCAct (CConstant (typeSize typ) cst)
 transformExpr _ (VarTExpr vId _) = return $ VarCAct (FromVarId vId)
 transformExpr v (UnOpTExpr op arg _) = defVar (UnOpArg op) v arg >>= transformUnOp op
-transformExpr v (BinOpTExpr op lhs rhs typ) = do
+transformExpr v (BinOpTExpr op lhs rhs _) = do
   lVar <- defVar (BinOpArg op) v lhs
   rVar <- defVar (BinOpArg op) v rhs
-  transformBinOp v typ op lVar rVar
+  transformBinOp v op (exprType lhs, lVar) (exprType rhs, rVar)
 transformExpr v (IfTExpr ifCond ifTrue ifFalse _) =
   IfCAct ifCond <$> defVar IfTrueBranch v ifTrue <*> defVar IfFalseBranch v ifFalse
+transformExpr v (ConcatTExpr lhs rhs _) =
+  ConcatCAct <$> defVar ConcatFirst v lhs <*> defVar ConcatSecond v rhs
+transformExpr v (SliceTExpr arg index _) = SliceCAct <$> defVar SliceArg v arg <*> pure index
+transformExpr v (SelectTExpr arg index _) = SelectCAct <$> defVar SelectArg v arg <*> pure index
 
 transformUnOp :: UnOp -> CVar -> TransformMonad CAction
 transformUnOp UnNeg arg = return $ UnOpCAct CUnNeg arg
 transformUnOp UnNot arg = return $ UnOpCAct CUnNot arg
 
-opKind :: AtomicTType -> CBinOp
-opKind typ = if isSignedOp typ then CBinSignedLt else CBinUnsignedLt
+opKind :: AtomicTType -> AtomicTType -> CBinOp
+opKind ltyp _ = if isSignedOp ltyp then CBinSignedLt else CBinUnsignedLt
 
-transformBinOp :: VarId -> AtomicTType -> BinOp -> CVar -> CVar -> TransformMonad CAction
-transformBinOp _ _ BinEq lhs rhs = return $ BinOpCAct CBinEq lhs rhs
-transformBinOp v typ BinNeq lhs rhs =
-  defWithAct (NotIntroduced BinNeq) v typ (BinOpCAct CBinEq lhs rhs) <&> UnOpCAct CUnNot
-transformBinOp _ typ BinLt lhs rhs = return $ BinOpCAct (opKind typ) lhs rhs
-transformBinOp v typ BinLe lhs rhs =
+transformBinOp :: VarId -> BinOp -> (AtomicTType, CVar) -> (AtomicTType, CVar) -> TransformMonad CAction
+transformBinOp _ BinEq (_, lhs) (_, rhs) = return $ BinOpCAct CBinEq lhs rhs
+transformBinOp v BinNeq (_, lhs) (_, rhs) =
+  defWithAct (NotIntroduced BinNeq) v TBool (BinOpCAct CBinEq lhs rhs) <&> UnOpCAct CUnNot
+transformBinOp _ BinLt (ltyp, lhs) (rtyp, rhs) = return $ BinOpCAct (opKind ltyp rtyp) lhs rhs
+transformBinOp v BinLe (ltyp, lhs) (rtyp, rhs) =
   -- lhs <= rhs <=> not(lhs > rhs) <=> not(rhs < lhs)
-  defWithAct (NotIntroduced BinNeq) v typ (BinOpCAct (opKind typ) rhs lhs) <&> UnOpCAct CUnNot
-transformBinOp _ typ BinGt lhs rhs =
+  defWithAct (NotIntroduced BinNeq) v TBool (BinOpCAct (opKind ltyp rtyp) rhs lhs) <&> UnOpCAct CUnNot
+transformBinOp _ BinGt (ltyp, lhs) (rtyp, rhs) =
   -- lhs > rhs <=> rhs < lhs
-  return $ BinOpCAct (opKind typ) rhs lhs
-transformBinOp v typ BinGe lhs rhs =
+  return $ BinOpCAct (opKind ltyp rtyp) rhs lhs
+transformBinOp v BinGe (ltyp, lhs) (rtyp, rhs) =
   -- lhs >= rhs <=> not(lhs < rhs)
-  defWithAct (NotIntroduced BinNeq) v typ (BinOpCAct (opKind typ) lhs rhs) <&> UnOpCAct CUnNot
-transformBinOp _ _ BinAdd lhs rhs = return $ BinOpCAct CBinAdd lhs rhs
-transformBinOp _ _ BinSub lhs rhs = return $ BinOpCAct CBinSub lhs rhs
-transformBinOp _ _ BinAnd lhs rhs = return $ BinOpCAct CBinAnd lhs rhs
-transformBinOp _ _ BinOr lhs rhs = return $ BinOpCAct CBinOr lhs rhs
+  defWithAct (NotIntroduced BinNeq) v TBool (BinOpCAct (opKind ltyp rtyp) lhs rhs) <&> UnOpCAct CUnNot
+transformBinOp _ BinAdd (_, lhs) (_, rhs) = return $ BinOpCAct CBinAdd lhs rhs
+transformBinOp _ BinSub (_, lhs) (_, rhs) = return $ BinOpCAct CBinSub lhs rhs
+transformBinOp _ BinAnd (_, lhs) (_, rhs) = return $ BinOpCAct CBinAnd lhs rhs
+transformBinOp _ BinOr (_, lhs) (_, rhs) = return $ BinOpCAct CBinOr lhs rhs
 
 isSignedOp :: AtomicTType -> Bool
 isSignedOp (TBitVector Signed _) = True

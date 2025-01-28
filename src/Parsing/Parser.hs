@@ -83,6 +83,9 @@ symbol s = void $ spaceConsumer *> string s <* spaceConsumer
 parens :: Parser a -> Parser a
 parens = between (symbol "(") (string ")")
 
+brackets :: Parser a -> Parser a
+brackets = between (symbol "[") (symbol "]")
+
 comma :: Parser ()
 comma = symbol ","
 
@@ -177,6 +180,16 @@ pParensExprs =
     buildExpr (L _ (e :| []) _) = e
     buildExpr loc@(L _ (x :| (y : l)) _) = loc $> TupleExpr (BiList x y l)
 
+pSliceExpr :: Parser Expr
+pSliceExpr = pLoc pSliceExpr'
+  where
+    pSliceExpr' = try $ SliceExpr <$> pIdentExpr <*> brackets ((,) <$> L.decimal <* colon <*> L.decimal)
+
+pSelectExpr :: Parser Expr
+pSelectExpr = pLoc pSelectExpr'
+  where
+    pSelectExpr' = try (SelectExpr <$> pIdentExpr <*> brackets L.decimal)
+
 pAppExpr :: Parser Expr
 pAppExpr = pLoc pAppExpr'
   where
@@ -206,6 +219,7 @@ exprTable =
       prefix (symbol "-") $ UnOpExpr UnNeg
     ],
     [prefix (keyword NOT) $ UnOpExpr UnNot],
+    [binary InfixL (symbol "++") $ ConcatExpr],
     [ binary InfixL (symbol "+") $ BinOpExpr BinAdd,
       binary InfixL (symbol "-") $ BinOpExpr BinSub
     ],
@@ -228,6 +242,8 @@ pTerm :: Parser Expr
 pTerm =
   choice
     [ pIfExpr,
+      pSliceExpr,
+      pSelectExpr,
       pAppExpr,
       pConstantExpr,
       pIdentExpr,

@@ -4,7 +4,7 @@
 #include <verilated.h>
 #include <verilated_vcd_c.h>
 
-#include "Vand.h"
+#include "Vconcat.h"
 
 #ifndef WAVEFORM_FILE
 #define WAVEFORM_FILE "waveform.vcd"
@@ -17,7 +17,7 @@ int main(int argc, char **argv, char **env) {
   Verilated::commandArgs(argc, argv);
 
   vluint64_t sim_time = 0;
-  Vand dut = Vand();
+  Vconcat dut = Vconcat();
 
   Verilated::traceEverOn(true);
   VerilatedVcdC trace = VerilatedVcdC();
@@ -31,8 +31,9 @@ int main(int argc, char **argv, char **env) {
   std::uniform_int_distribution<uint8_t> dist(0, 255);
 
   for (size_t i = 0; i < SIM_TIME; i++) {
-    const uint8_t x = dist(rd);
+    const uint8_t x = dist(rd) & 0b11111;
     const uint8_t y = dist(rd);
+    const uint16_t res = x << 11 | y << 3;
 
     dut.clock = 1;
     dut.var_x = x;
@@ -41,8 +42,8 @@ int main(int argc, char **argv, char **env) {
     dut.eval();
     trace.dump(2 * i);
 
-    if (dut.var_res != (x & y)) {
-      std::cerr << "Error at cycle " << i << " (expected: " << (int)(x & y)
+    if (dut.var_res != res) {
+      std::cerr << "Error at cycle " << i << " (expected: " << (int)(res)
                 << " found: " << (int)(dut.var_res) << ")" << std::endl;
     }
 
