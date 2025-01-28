@@ -1,0 +1,4 @@
+node main(x: bool) returns (res: bool);
+let
+    res = not x;
+tel

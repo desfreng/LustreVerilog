@@ -73,24 +73,23 @@ transformUnOp :: UnOp -> CVar -> TransformMonad CAction
 transformUnOp UnNeg arg = return $ UnOpCAct CUnNeg arg
 transformUnOp UnNot arg = return $ UnOpCAct CUnNot arg
 
+opKind :: AtomicTType -> CBinOp
+opKind typ = if isSignedOp typ then CBinSignedLt else CBinUnsignedLt
+
 transformBinOp :: VarId -> AtomicTType -> BinOp -> CVar -> CVar -> TransformMonad CAction
 transformBinOp _ _ BinEq lhs rhs = return $ BinOpCAct CBinEq lhs rhs
 transformBinOp v typ BinNeq lhs rhs =
   defWithAct (NotIntroduced BinNeq) v typ (BinOpCAct CBinEq lhs rhs) <&> UnOpCAct CUnNot
-transformBinOp _ typ BinLt lhs rhs =
-  let opKind = if isSignedOp typ then CBinSignedLt else CBinUnsignedLt
-   in return $ BinOpCAct opKind lhs rhs
-transformBinOp _ typ BinLe lhs rhs =
-  let opKind = if isSignedOp typ then CBinSignedGe else CBinUnsignedGe
-   in -- lhs <= rhs <=> rhs >= lhs
-      return $ BinOpCAct opKind rhs lhs
+transformBinOp _ typ BinLt lhs rhs = return $ BinOpCAct (opKind typ) lhs rhs
+transformBinOp v typ BinLe lhs rhs =
+  -- lhs <= rhs <=> not(lhs > rhs) <=> not(rhs < lhs)
+  defWithAct (NotIntroduced BinNeq) v typ (BinOpCAct (opKind typ) rhs lhs) <&> UnOpCAct CUnNot
 transformBinOp _ typ BinGt lhs rhs =
-  let opKind = if isSignedOp typ then CBinSignedLt else CBinUnsignedLt
-   in -- lhs > rhs <=> rhs < lhs
-      return $ BinOpCAct opKind rhs lhs
-transformBinOp _ typ BinGe lhs rhs =
-  let opKind = if isSignedOp typ then CBinSignedGe else CBinUnsignedGe
-   in return $ BinOpCAct opKind lhs rhs
+  -- lhs > rhs <=> rhs < lhs
+  return $ BinOpCAct (opKind typ) rhs lhs
+transformBinOp v typ BinGe lhs rhs =
+  -- lhs >= rhs <=> not(lhs < rhs)
+  defWithAct (NotIntroduced BinNeq) v typ (BinOpCAct (opKind typ) lhs rhs) <&> UnOpCAct CUnNot
 transformBinOp _ _ BinAdd lhs rhs = return $ BinOpCAct CBinAdd lhs rhs
 transformBinOp _ _ BinSub lhs rhs = return $ BinOpCAct CBinSub lhs rhs
 transformBinOp _ _ BinAnd lhs rhs = return $ BinOpCAct CBinAnd lhs rhs

@@ -1,0 +1,4 @@
+node main(x, y: i8) returns (res: i8);
+let
+    res = x + y;
+tel

@@ -20,9 +20,7 @@ instance Show CUnOp where
 data CBinOp
   = CBinEq
   | CBinSignedLt
-  | CBinSignedGe
   | CBinUnsignedLt
-  | CBinUnsignedGe
   | CBinAdd
   | CBinSub
   | CBinAnd
@@ -31,15 +29,13 @@ data CBinOp
 
 instance Show CBinOp where
   show :: CBinOp -> String
-  show CBinEq = "eq"
-  show CBinSignedLt = "signed_lt"
-  show CBinSignedGe = "signed_ge"
-  show CBinUnsignedLt = "unsigned_lt"
-  show CBinUnsignedGe = "unsigned_ge"
   show CBinAdd = "add"
-  show CBinSub = "sub"
   show CBinAnd = "and"
+  show CBinEq = "eq"
   show CBinOr = "or"
+  show CBinSignedLt = "signed_lt"
+  show CBinSub = "sub"
+  show CBinUnsignedLt = "unsigned_lt"
 
 data CVar
   = FromVarId VarId

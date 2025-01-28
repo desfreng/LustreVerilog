@@ -1,0 +1,4 @@
+node main(x, y: bool) returns (res: bool);
+let
+    res = x and y;
+tel

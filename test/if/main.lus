@@ -1,0 +1,4 @@
+node main(a: bool; t, f: u8) returns (res: u8);
+let
+    res = if a then t else f;
+tel

@@ -62,8 +62,8 @@ buildUnOpModules name kind = (moduleHead, show name <> base_suffix)
 binOpInSize :: Ident
 binOpInSize = Ident "N"
 
-buildBinOpModule :: BaseModule -> VarType -> VarSize -> (ModuleHead, ModuleImport)
-buildBinOpModule name kind outSize = (moduleHead, show name <> base_suffix)
+buildBinOpModule :: BaseModule -> VarType -> VarType -> VarSize -> (ModuleHead, ModuleImport)
+buildBinOpModule name kind outKind outSize = (moduleHead, show name <> base_suffix)
   where
     moduleHead =
       ModuleHead
@@ -74,28 +74,24 @@ buildBinOpModule name kind outSize = (moduleHead, show name <> base_suffix)
             [ WireDecl kind (VariableSize binOpInSize) $ Ident "lhs",
               WireDecl kind (VariableSize binOpInSize) $ Ident "rhs"
             ],
-          outputVars = NonEmpty.singleton $ WireDecl kind outSize $ Ident "res"
+          outputVars = NonEmpty.singleton $ WireDecl outKind outSize $ Ident "res"
         }
 
 binOpModules :: CBinOp -> (ModuleHead, ModuleImport)
 binOpModules op@CBinEq =
-  buildBinOpModule (BinOpModule op) Unsigned (FixedSize (BVSize 1))
+  buildBinOpModule (BinOpModule op) Unsigned Unsigned (FixedSize (BVSize 1))
 binOpModules op@CBinSignedLt =
-  buildBinOpModule (BinOpModule op) Signed (FixedSize (BVSize 1))
-binOpModules op@CBinSignedGe =
-  buildBinOpModule (BinOpModule op) Signed (FixedSize (BVSize 1))
+  buildBinOpModule (BinOpModule op) Signed Unsigned (FixedSize (BVSize 1))
 binOpModules op@CBinUnsignedLt =
-  buildBinOpModule (BinOpModule op) Unsigned (FixedSize (BVSize 1))
-binOpModules op@CBinUnsignedGe =
-  buildBinOpModule (BinOpModule op) Unsigned (FixedSize (BVSize 1))
+  buildBinOpModule (BinOpModule op) Unsigned Unsigned (FixedSize (BVSize 1))
 binOpModules op@CBinAdd =
-  buildBinOpModule (BinOpModule op) Unsigned (VariableSize binOpInSize)
+  buildBinOpModule (BinOpModule op) Unsigned Unsigned (VariableSize binOpInSize)
 binOpModules op@CBinSub =
-  buildBinOpModule (BinOpModule op) Signed (VariableSize binOpInSize)
+  buildBinOpModule (BinOpModule op) Signed Signed (VariableSize binOpInSize)
 binOpModules op@CBinAnd =
-  buildBinOpModule (BinOpModule op) Unsigned (VariableSize binOpInSize)
+  buildBinOpModule (BinOpModule op) Unsigned Unsigned (VariableSize binOpInSize)
 binOpModules op@CBinOr =
-  buildBinOpModule (BinOpModule op) Unsigned (VariableSize binOpInSize)
+  buildBinOpModule (BinOpModule op) Unsigned Unsigned (VariableSize binOpInSize)
 
 fbyModule :: (ModuleHead, ModuleImport)
 fbyModule = (moduleHead, show FbyModule <> base_suffix)
@@ -120,7 +116,6 @@ fbyModule = (moduleHead, show FbyModule <> base_suffix)
             ],
           outputVars = NonEmpty.singleton $ WireDecl Unsigned (VariableSize size) $ Ident "res"
         }
-
 
 ifModule :: (ModuleHead, ModuleImport)
 ifModule = (moduleHead, show IfModule <> base_suffix)

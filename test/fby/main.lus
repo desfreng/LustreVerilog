@@ -8,8 +8,14 @@ let
     o = true fby false fby false fby o;
 tel
 
-node main(a: bool) returns (x, y: bool);
+node cycle4() returns (o: bool);
+let
+    o = true fby false fby false fby false fby o;
+tel
+
+node main(a: bool) returns (x, y, z: bool);
 let
     x = after(a);
     y = cycle3();
+    z = cycle4();
 tel

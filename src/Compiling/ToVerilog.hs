@@ -81,7 +81,7 @@ exprToVerilog ctrlArgs nCtx (SimpleCEq v (UnOpCAct op arg)) =
       modArgs = [encodeIdent arg]
    in InstExpr $ ModuleInst (Base $ UnOpModule op) [FixedValue argSize] ctrlArgs modArgs (encodeIdent v :| [])
 exprToVerilog ctrlArgs nCtx (SimpleCEq v (BinOpCAct op lhs rhs)) =
-  let argSize = getVarSize nCtx v
+  let argSize = getVarSize nCtx lhs
       modArgs = [encodeIdent lhs, encodeIdent rhs]
    in InstExpr $ ModuleInst (Base $ BinOpModule op) [FixedValue argSize] ctrlArgs modArgs (encodeIdent v :| [])
 exprToVerilog ctrlArgs nCtx (SimpleCEq v (IfCAct cond tB fB)) =

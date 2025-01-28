@@ -11,13 +11,10 @@ license-file:       LICENSE
 author:             Gabriel Desfrene
 maintainer:         gabriel@desfrene.fr
 
--- A copyright notice.
--- copyright:
 category:           System
 build-type:         Simple
 
 extra-doc-files:
-    CHANGELOG.md
     README.md
 
 -- STDLib
@@ -86,6 +83,8 @@ executable LustreVerilog
     other-modules:
         Paths_LustreVerilog
 
+    autogen-modules:
+        Paths_LustreVerilog
 
     default-extensions: Safe
 

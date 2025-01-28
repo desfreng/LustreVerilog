@@ -43,3 +43,6 @@ obj_dir/
 *.epci
 *.mls
 *.obc
+
+# -- CMake
+build/
