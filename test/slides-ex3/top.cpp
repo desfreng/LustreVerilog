@@ -3,7 +3,7 @@
 #include <verilated.h>
 #include <verilated_vcd_c.h>
 
-#include "Vmain.h"
+#include "Vslides_ex3.h"
 
 #ifndef WAVEFORM_FILE
 #define WAVEFORM_FILE "waveform.vcd"
@@ -15,13 +15,15 @@ int main(int argc, char **argv, char **env) {
   Verilated::commandArgs(argc, argv);
 
   vluint64_t sim_time = 0;
-  Vmain dut = Vmain();
+  Vslides_ex3 dut = Vslides_ex3();
 
   Verilated::traceEverOn(true);
   VerilatedVcdC trace = VerilatedVcdC();
 
   dut.trace(&trace, 5);
   trace.open(WAVEFORM_FILE);
+
+  dut.reset_n = 1; // Reset is Active Low
 
   std::random_device rd;
   std::uniform_int_distribution<size_t> dist(0, SIM_TIME / 3);
@@ -32,11 +34,11 @@ int main(int argc, char **argv, char **env) {
     dut.clock = 1;
 
     if (i > cut_off) {
-      dut.x = bool_dist(rd);
+      dut.var_x = bool_dist(rd);
     }
 
     const bool do_reset = (2 * i > SIM_TIME) && (i % 10 == 0);
-    dut.reset = do_reset;
+    dut.var_reset = do_reset;
 
     dut.eval();
     trace.dump(2 * i);

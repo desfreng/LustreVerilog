@@ -1,0 +1,11 @@
+node after(x, reset: bool) returns (after: bool);
+let
+  after = if reset
+            then false
+            else x or (false fby after);
+tel
+
+node main(reset, x: bool) returns (y: u8);
+let
+    y = 0 fby if after(x, reset) then y + 1 else 0;
+tel

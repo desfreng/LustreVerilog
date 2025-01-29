@@ -1,0 +1,313 @@
+\documentclass{beamer}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage[justification=centering]{caption}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{hyperref}
+\usepackage{minted}
+\usepackage{ebproof}
+\usepackage{mathtools}
+\usepackage{tikz}
+\usepackage{xcolor}
+\usepackage{tcolorbox}
+
+\usetikzlibrary{positioning}
+
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{itemize item}[circle]
+
+\usetheme{Singapore}
+
+\title{Lustre \texorpdfstring{$\to$}{->} Verilog}
+\author{Gabriel Desfrene}
+\date{29 January 2025}
+
+
+\DeclareMathOperator{\Bool}{Bool}
+\DeclareMathOperator{\Int}{Int}
+\DeclareMathOperator{\Signed}{Signed}
+\DeclareMathOperator{\Unsigned}{Unsigned}
+\DeclareMathOperator{\Raw}{Raw}
+
+\begin{document}
+
+\maketitle
+
+\section{Goal}
+
+\subsection{Verilog}
+
+\begin{frame}{The Verilog Language}
+    \begin{itemize}
+        \item Hardware Description Language (HDL) used to model digital circuits.
+        \item  Developed in 1984.
+        \item Syntax similar to C.
+        \item Supports multiple paradigms: structural \& behavioral.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Example 1}
+    \begin{minted}{verilog}
+        module main (
+            input wire clock,
+            input wire reset,
+            input wire x,
+            output reg [7:0] y
+        );
+          always @(posedge clock) begin
+            if (reset) y <= 8'd0;
+            else if (x || y > 0) y <= y + 8'd1;
+          end
+        endmodule
+    \end{minted}
+\end{frame}
+
+\begin{frame}[fragile]{Example 2}
+    \begin{minted}{verilog}
+        module main (
+            input  wire clock,
+            input  wire reset,
+            input  wire x,
+            output reg  y
+        );
+          wire new_y, reset_n, x_or_y;
+
+          not (reset_n, reset);
+          or (x_or_y, x, y);
+          and (new_y, reset_n, x_or_y);
+
+          always @(posedge clock) begin
+            y <= new_y;
+          end
+        endmodule
+    \end{minted}
+\end{frame}
+
+\begin{frame}{Conclusion}
+    \begin{LARGE}
+        \begin{center}
+            \bf
+            It's verbose and it's ugly.
+        \end{center}
+    \end{LARGE}
+\end{frame}
+
+\subsection{Goal}
+
+\begin{frame}{Objectif}
+    \begin{LARGE}
+        \begin{center}
+            \bf
+            Compiling Lustre into Verilog.
+        \end{center}
+    \end{LARGE}
+\end{frame}
+
+\begin{frame}{Compiling Lustre into Verilog}
+    \begin{itemize}
+        \item \textbf{Why?}
+              \begin{itemize}
+                  \item Take advantage of Lustre's elegance,
+                  \item Synthesize Lustre models,
+                  \item It looks fun.
+              \end{itemize}
+              \pause{}
+        \item \textbf{Why Verilog?}
+              \begin{itemize}
+                  \item Standard language for hardware synthesis,
+                  \item Allows description in terms of logic gates,
+                  \item It's a good opportunity to use it a bit.
+              \end{itemize}
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Specifications}
+    \begin{itemize}
+        \item Compile a subset of Lustre into \emph{gate-level} Verilog.
+        \item Maintain \emph{retrocompatible} syntax with existing Lustre compilers.
+        \item Add operations to handle buses.
+    \end{itemize}
+\end{frame}
+
+\section{Adapting Lustre}
+
+\begin{frame}{The Lustre Kernel}
+    \begin{itemize}
+        \setlength{\itemsep}{6pt}
+        \item Unary operations:
+              \begin{itemize}
+                  \setlength{\itemsep}{3pt}
+                  \item \texttt{not}: $\Bool \to \Bool$
+                  \item \texttt{neg}: $\Int \to \Int$
+              \end{itemize}
+        \item Binary operations:
+              \begin{itemize}
+                  \setlength{\itemsep}{3pt}
+                  \item \texttt{and}, \texttt{or}: $\Bool \to \Bool \to \Bool$
+                  \item $+, -$: $\Int \to \Int \to \Int$
+                  \item $=, \neq, <, \leqslant, \geqslant, >$: $\Int \to \Int \to \Bool$
+              \end{itemize}
+        \item Branching expressions: $\Bool \to \tau \to \tau \to \tau$
+        \item \texttt{fby}: $\tau \to \tau \to \tau$
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Using Bit-Vectors}
+    \begin{itemize}
+        \setlength{\itemsep}{6pt}
+        \item $\Int \coloneqq \Signed_{\gamma}$
+        \item Unary operations:
+              \begin{itemize}
+                  \setlength{\itemsep}{3pt}
+                  \item \texttt{not}: $\Bool \to \Bool$
+                  \item \texttt{neg}: $\Signed_{\sigma} \to \Signed_{\sigma}$
+              \end{itemize}
+        \item Binary operations:
+              \begin{itemize}
+                  \setlength{\itemsep}{3pt}
+                  \item \texttt{and}, \texttt{or}: $\Bool \to \Bool \to \Bool$
+                  \item $+$: $\tau \to \tau \to \tau$ \hfill $\tau \in\{\Signed_{\sigma}, \Unsigned_{\sigma}\}$
+                  \item $-$: $\Signed_{\sigma} \to \Signed_{\sigma} \to \Signed_{\sigma}$
+                  \item $=, \neq, <, \leqslant, \geqslant, >$: $\tau \to \tau \to \Bool$ \hfill $\tau \in\{\Signed_{\sigma}, \Unsigned_{\sigma}\}$
+              \end{itemize}
+        \item Branching expressions: $\Bool \to \tau \to \tau \to \tau$
+        \item \texttt{fby}: $\tau \to \tau \to \tau$
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Bit-Vectors Operation}
+    \begin{itemize}
+        \setlength{\itemsep}{6pt}
+        \item \texttt{slice} $i$: $\Raw_{\sigma} \to \Bool$ \hfill $0 \leqslant i < \sigma$
+        \item \texttt{select} $[i:j]$: $\Raw_{\sigma} \to \Raw_{j - i}$ \hfill $0 \leqslant i < j \leqslant \sigma$
+        \item \texttt{concat}: $\Raw_{\sigma_1}|\Bool \to \Raw_{\sigma_2}|\Bool \to \Raw_{\sigma_1 + \sigma_2}$
+        \item Conversions: $\Raw_{\sigma} \to \Signed_{\sigma}, \Signed_{\sigma} \to \Unsigned_{\sigma}, \dots$
+        \item $=, \neq$: $\Raw_{\sigma} \to \Raw_{\sigma} \to \Bool$
+    \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Finally}
+    \visible<2->{
+        \begin{tikzpicture}[remember picture,overlay]
+            \node [rotate=20,scale=5,text opacity=0.3]
+            at (current page.center) {MINIJAZZ};
+        \end{tikzpicture}
+    }
+
+    \begin{minted}{ocaml}
+    node after(x, reset: bool) returns (after: bool);
+    let
+        after = if reset
+                then false
+                else x or (false fby after);
+    tel
+
+    node main(reset, x: bool) returns (y: u8);
+    let
+        y = 0 fby if after(x, reset) then y + 1 else 0;
+    tel
+    \end{minted}
+    \pause{}
+\end{frame}
+
+\section{Implementation}
+
+\subsection{Haskell Propaganda}
+
+\begin{frame}{Using Haskell}
+    \begin{columns}
+        \column{0.5\textwidth}
+        \centering
+        \textit{Rust: Borrow checker required}
+        \newline
+        \textbf{\large Haskell: No need, it's immutable!}
+
+        \vspace{1cm}
+
+        \centering
+        \textit{Rust: ``Fearless Concurrency''}
+        \newline
+        \textbf{\large Haskell: Concurrency is just a Monad!}
+
+        \column{0.5\textwidth}
+
+        \centering
+        \textit{Rust: Lifetimes are hard}
+        \newline
+        \textbf{\large Haskell: Garbage Collector does it for you!}
+
+        \vspace{1cm}
+
+        \centering
+        \textit{Rust: Memory safe with effort}
+        \newline
+        \textbf{\large Haskell: Memory safe by default!}
+    \end{columns}
+
+    \pause{}
+    \vfill
+    \centering
+    \textbf{\Large Choose Haskell. Be functional. Be safe. Be pure.}
+\end{frame}
+
+\subsection{Compiler Stages}
+
+\begin{frame}{Parsing}
+    \begin{itemize}
+        \setlength{\itemsep}{8pt}
+        \item We use \emph{Megaparsec}, a \emph{Monadic Parser} to parse our Lustre grammar,
+        \item Monads Used: 2.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Typing}
+    \begin{itemize}
+        \setlength{\itemsep}{8pt}
+        \item Constants !!!
+        \item Monads Used: xx.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Normalization}
+    \begin{itemize}
+        \setlength{\itemsep}{8pt}
+        \item
+        \item Monads Used: xx.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Verilog Conversion}
+    \begin{itemize}
+        \setlength{\itemsep}{8pt}
+        \item
+        \item Monads Used: xx.
+    \end{itemize}
+\end{frame}
+
+\subsection{Standard Library}
+
+\begin{frame}{Standard Library Design}
+
+\end{frame}
+
+\begin{frame}{The Lustre ALU}
+
+\end{frame}
+
+\begin{frame}{Examples}
+
+\end{frame}
+
+\section{Results}
+
+\begin{frame}{Some Stats}
+
+\end{frame}
+
+\begin{frame}{Possibles Improvements}
+
+\end{frame}
+
+\end{document}
