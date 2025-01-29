@@ -33,6 +33,9 @@ data Keyword
   | FALSE
   | BOOL
   | INT
+  | RAW
+  | SIGNED
+  | UNSIGNED
   | IF
   | THEN
   | ELSE
@@ -52,6 +55,9 @@ kwToString TRUE = "true"
 kwToString FALSE = "false"
 kwToString BOOL = "bool"
 kwToString INT = "int"
+kwToString RAW = "raw"
+kwToString SIGNED = "signed"
+kwToString UNSIGNED = "unsigned"
 kwToString IF = "if"
 kwToString THEN = "then"
 kwToString ELSE = "else"
@@ -116,7 +122,7 @@ pIdent = pLoc pIdent' <?> "identifier"
 keyword :: Keyword -> Parser (Pos Text)
 keyword k = pLoc pKeyword <?> "keyword"
   where
-    pKeyword = string (kwToString k) <* notFollowedBy (satisfy isAlphaNum)
+    pKeyword = try $ string (kwToString k) <* notFollowedBy (satisfy isAlphaNum)
 
 pInteger :: Parser (Pos Integer)
 pInteger = pLoc pInteger'
@@ -218,7 +224,11 @@ exprTable =
   [ [ prefix (symbol "+") unwrap,
       prefix (symbol "-") $ UnOpExpr UnNeg
     ],
-    [prefix (keyword NOT) $ UnOpExpr UnNot],
+    [ prefix (keyword NOT) $ UnOpExpr UnNot,
+      prefix (keyword RAW) $ ConvertExpr Raw,
+      prefix (keyword SIGNED) $ ConvertExpr Signed,
+      prefix (keyword UNSIGNED) $ ConvertExpr Unsigned
+    ],
     [binary InfixL (symbol "++") $ ConcatExpr],
     [ binary InfixL (symbol "+") $ BinOpExpr BinAdd,
       binary InfixL (symbol "-") $ BinOpExpr BinSub

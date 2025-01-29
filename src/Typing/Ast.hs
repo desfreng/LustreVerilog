@@ -6,7 +6,12 @@ module Typing.Ast where
 import Commons.Ast (Ast, BinOp, Constant, Node, UnOp)
 import Commons.Ids (NodeIdent, VarId)
 import Commons.Types (AtomicTType, BVSize)
+import Data.Bifunctor (Bifunctor (first, second))
+import Data.Bitraversable (Bitraversable (bitraverse))
+import Data.Either (lefts)
 import Data.List.NonEmpty (NonEmpty)
+
+type TConstant atyp = (Constant, atyp)
 
 -- | A Typed Expression in a Lustre Program
 data TExpr atyp
@@ -26,6 +31,8 @@ data TExpr atyp
     SliceTExpr (TExpr atyp) (BVSize, BVSize) atyp
   | -- | Select Expression: @a[1]@
     SelectTExpr (TExpr atyp) BVSize atyp
+  | -- | Convert a BitVector to another type
+    ConvertTExpr (TExpr atyp) atyp
   deriving (Show)
 
 data TEquation atyp
@@ -34,7 +41,7 @@ data TEquation atyp
   | -- | A delayed expression: @x = init -> next@
     FbyTEq VarId (TExpr atyp) (TExpr atyp)
   | -- | A call to another node : @(x, ..., z) = f(a, ..., b)@
-    CallTEq (NonEmpty VarId) NodeIdent [VarId]
+    CallTEq (NonEmpty VarId) NodeIdent [Either (TConstant atyp) VarId]
   deriving (Show)
 
 type TNodeEq = TEquation AtomicTType
@@ -52,6 +59,7 @@ exprType (IfTExpr _ _ _ t) = t
 exprType (ConcatTExpr _ _ t) = t
 exprType (SliceTExpr _ _ t) = t
 exprType (SelectTExpr _ _ t) = t
+exprType (ConvertTExpr _ t) = t
 
 instance Foldable TExpr where
   foldMap :: (Monoid m) => (a -> m) -> TExpr a -> m
@@ -67,6 +75,7 @@ instance Functor TExpr where
   fmap f (ConcatTExpr lhs rhs typ) = ConcatTExpr (fmap f lhs) (fmap f rhs) $ f typ
   fmap f (SliceTExpr arg i typ) = SliceTExpr (fmap f arg) i $ f typ
   fmap f (SelectTExpr arg i typ) = SelectTExpr (fmap f arg) i $ f typ
+  fmap f (ConvertTExpr arg typ) = ConvertTExpr (fmap f arg) $ f typ
 
 instance Traversable TExpr where
   traverse :: (Applicative f) => (a -> f b) -> TExpr a -> f (TExpr b)
@@ -79,21 +88,22 @@ instance Traversable TExpr where
   traverse f (ConcatTExpr lhs rhs typ) = ConcatTExpr <$> traverse f lhs <*> traverse f rhs <*> f typ
   traverse f (SliceTExpr arg i typ) = SliceTExpr <$> traverse f arg <*> pure i <*> f typ
   traverse f (SelectTExpr arg i typ) = SelectTExpr <$> traverse f arg <*> pure i <*> f typ
+  traverse f (ConvertTExpr arg typ) = ConvertTExpr <$> traverse f arg <*> f typ
 
 instance Foldable TEquation where
   foldMap :: (Monoid m) => (a -> m) -> TEquation a -> m
   foldMap f (SimpleTEq _ e) = foldMap f e
   foldMap f (FbyTEq _ initE nextE) = foldMap f initE <> foldMap f nextE
-  foldMap _ (CallTEq _ _ _) = mempty
+  foldMap f (CallTEq _ _ l) = foldMap (f . snd) $ lefts l
 
 instance Functor TEquation where
   fmap :: (a -> b) -> TEquation a -> TEquation b
   fmap f (SimpleTEq v e) = SimpleTEq v $ fmap f e
   fmap f (FbyTEq v initE nextE) = FbyTEq v (fmap f initE) (fmap f nextE)
-  fmap _ (CallTEq vars node e) = CallTEq vars node e
+  fmap f (CallTEq vars node e) = CallTEq vars node $ fmap (first $ second f) e
 
 instance Traversable TEquation where
   traverse :: (Applicative f) => (a -> f b) -> TEquation a -> f (TEquation b)
   traverse f (SimpleTEq v e) = SimpleTEq v <$> traverse f e
   traverse f (FbyTEq v initE nextE) = FbyTEq v <$> traverse f initE <*> traverse f nextE
-  traverse _ (CallTEq vars node e) = pure $ CallTEq vars node e
+  traverse f (CallTEq vars node e) = CallTEq vars node <$> traverse (bitraverse (bitraverse pure f) pure) e

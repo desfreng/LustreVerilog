@@ -18,6 +18,7 @@ import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Control.Monad.Writer
+import Data.Either
 import Data.Foldable
 import Data.Functor
 import qualified Data.List as List
@@ -121,6 +122,7 @@ freeVars = freeVars'
     freeVars' (ConcatTExpr lhs rhs _) = freeVars lhs `Set.union` freeVars rhs
     freeVars' (SliceTExpr arg _ _) = freeVars arg
     freeVars' (SelectTExpr arg _ _) = freeVars arg
+    freeVars' (ConvertTExpr arg _) = freeVars arg
 
 type CausalityGraph = Map VarId (Set VarId)
 
@@ -156,7 +158,7 @@ buildCausalityGraph (Node _ eqs) =
     go (SimpleTEq v expr) = Map.singleton v (freeVars expr)
     go (FbyTEq x initE _) = Map.singleton x (freeVars initE)
     go (CallTEq l _ args) =
-      let argsDeps = Set.fromList args
+      let argsDeps = Set.fromList $ rights args
        in Map.fromList $ (,argsDeps) <$> toList l
 
 dfs :: VarId -> DFS ()

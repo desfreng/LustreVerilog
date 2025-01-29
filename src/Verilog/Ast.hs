@@ -46,24 +46,20 @@ data ModuleInst = ModuleInst
   { name :: ModuleName,
     staticArgs :: [StaticValue],
     controlArgs :: Maybe (ModuleControl Ident),
-    inArgs :: [Ident],
+    inArgs :: [Either Constant Ident],
     outArgs :: NonEmpty Ident
   }
   deriving (Show)
 
 data Expr
-  = VarExpr Ident Ident
-  | ConstExpr Ident Constant
+  = AssignExpr Ident (Either Constant Ident)
   | InstExpr ModuleInst
-  deriving (Show)
-
-data VarType = Signed | Unsigned
   deriving (Show)
 
 data VarSize = FixedSize BVSize | VariableSize Ident | DeltaSize Ident Ident | SumSize Ident Ident
   deriving (Show)
 
-data VarDecl = WireDecl VarType VarSize Ident
+data VarDecl = WireDecl VarSize Ident
   deriving (Show)
 
 data StaticDecl = StaticDecl {getStaticName :: Ident, getStaticValue :: (Maybe BVSize)}
@@ -104,11 +100,6 @@ instance Pretty Constant where
   pretty :: Constant -> Doc ann
   pretty Constant {valueSize, value} = pretty valueSize <> "'d" <> pretty value
 
-instance Pretty VarType where
-  pretty :: VarType -> Doc ann
-  pretty Signed = "signed"
-  pretty Unsigned = "unsigned"
-
 instance Show BaseModule where
   show :: BaseModule -> String
   show x =
@@ -123,7 +114,7 @@ instance Show BaseModule where
 
 instance Pretty VarDecl where
   pretty :: VarDecl -> Doc ann
-  pretty (WireDecl kind size name) = "wire" <+> prettyVarDecl kind size name
+  pretty (WireDecl size name) = "wire" <+> prettyVarDecl size name
 
 instance Show ModuleName where
   show :: ModuleName -> String
@@ -136,7 +127,7 @@ instance Pretty ModuleName where
   pretty = unsafeViaShow
 
 getVarName :: VarDecl -> Ident
-getVarName (WireDecl _ _ n) = n
+getVarName (WireDecl _ n) = n
 
 toIdent :: ModuleControl VarDecl -> ModuleControl Ident
 toIdent ModuleControl {clockVar, initVar} = ModuleControl (getVarName clockVar) (getVarName initVar)
@@ -148,8 +139,8 @@ prettyVarSize (VariableSize size) = Just . brackets $ pretty size <> "-1:0"
 prettyVarSize (DeltaSize fstIndex sndIndex) = Just . brackets $ "(" <> pretty sndIndex <> "-" <> pretty fstIndex <> ":0"
 prettyVarSize (SumSize x y) = Just . brackets $ "(" <> pretty x <> "+" <> pretty y <> ")-1:0"
 
-prettyVarDecl :: VarType -> VarSize -> Ident -> Doc ann
-prettyVarDecl kind size name =
+prettyVarDecl :: VarSize -> Ident -> Doc ann
+prettyVarDecl size name =
   case prettyVarSize size of
-    Nothing -> pretty kind <+> pretty name
-    Just pp -> pretty kind <+> pp <+> pretty name
+    Nothing -> pretty name
+    Just pp -> pp <+> pretty name

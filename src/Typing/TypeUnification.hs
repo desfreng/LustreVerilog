@@ -329,12 +329,13 @@ buildAndBind loc v = do
 constantTypeCand :: Pos a -> Constant -> TypeUnifier TypeCand
 constantTypeCand loc = buildAndBind loc . go
   where
-    integerLog2 :: Integer -> Int
-    integerLog2 = floor . logBase (2.0 :: Double) . fromIntegral
+    busSize :: Integer -> Int
+    busSize 0 = 0
+    busSize x = floor . logBase (2.0 :: Double) $ fromIntegral x
 
     go (BoolConst _) = Bool
     go (IntegerConst i) =
-      let log2 = fromEnum (integerLog2 i)
+      let log2 = fromEnum (busSize i)
           minUSize = UnSig (BVSize (1 + log2))
           minSSize = Sig (BVSize (2 + log2))
        in Numeric (Raw :| [Unsigned, Signed]) minUSize minSSize

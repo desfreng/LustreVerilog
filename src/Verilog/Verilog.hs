@@ -89,7 +89,7 @@ buildMainModule reset sigs mainName =
       mControl = case controlVars m of
         Nothing -> Nothing
         Just ModuleControl {clockVar} ->
-          let resetVar = WireDecl Unsigned (FixedSize (BVSize 1)) resetName
+          let resetVar = WireDecl (FixedSize (BVSize 1)) resetName
            in Just
                 ( ModuleControl {clockVar, initVar = resetVar},
                   ModuleControl {clockVar = getVarName clockVar, initVar = initName},
@@ -101,7 +101,7 @@ buildMainModule reset sigs mainName =
           { name = moduleName m,
             staticArgs = DeclaredValue . getStaticName <$> staticVars m,
             controlArgs = (snd3 <$> mControl),
-            inArgs = getVarName <$> inputVars m,
+            inArgs = Right . getVarName <$> inputVars m,
             outArgs = getVarName <$> outputVars m
           }
       resetBody = case mControl of
@@ -180,11 +180,12 @@ moduleBodyToVerilog sigs eqs =
   let nodeExprList = mapM (exprToVerilog sigs) $ eqs
    in concatExpr . toList <$> nodeExprList
 
+valToVerilog :: Either Constant Ident -> Doc ann
+valToVerilog = either pretty pretty
+
 exprToVerilog :: ModuleEnv -> Expr -> CallNumbering (Doc ann)
-exprToVerilog _ (VarExpr vDef val) =
-  return $ "assign" <+> pretty vDef <+> "=" <+> pretty val
-exprToVerilog _ (ConstExpr vDef val) =
-  return $ "assign" <+> pretty vDef <+> "=" <+> pretty val
+exprToVerilog _ (AssignExpr vDef val) =
+  return $ "assign" <+> pretty vDef <+> "=" <+> valToVerilog val
 exprToVerilog sigs (InstExpr inst) =
   let m = getModuleHead sigs $ name inst in moduleInst m inst
 
@@ -193,7 +194,7 @@ moduleInst m ModuleInst {name, staticArgs, controlArgs, inArgs, outArgs} =
   let callName instId = "call_" <> pretty name <> "_" <> pretty instId <+> "("
       callStatic = zipWith ppStaticArg (staticVars m) staticArgs
       callControlArgs = ppControlArgs (controlVars m) controlArgs
-      callInArgs = zipWith ppVarArg (inputVars m) $ pretty <$> inArgs
+      callInArgs = zipWith ppVarArg (inputVars m) $ valToVerilog <$> inArgs
       callOutArgs = NonEmpty.zipWith ppVarArg (outputVars m) $ pretty <$> outArgs
       callArgs = punctuate "," $ callControlArgs <> callInArgs <> toList callOutArgs
       static = case callStatic of

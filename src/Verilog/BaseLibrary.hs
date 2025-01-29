@@ -25,8 +25,7 @@ computeModuleReqs :: NonEmpty Expr -> Set BaseModule
 computeModuleReqs l = Set.fromList . catMaybes $ computeExprReqs <$> toList l
 
 computeExprReqs :: Expr -> Maybe BaseModule
-computeExprReqs (VarExpr _ _) = Nothing
-computeExprReqs (ConstExpr _ _) = Nothing
+computeExprReqs (AssignExpr _ _) = Nothing
 computeExprReqs (InstExpr ModuleInst {name = Base m}) = Just m
 computeExprReqs (InstExpr ModuleInst {name = Custom _}) = Nothing
 computeExprReqs (InstExpr ModuleInst {name = MainModule}) = Nothing
@@ -39,8 +38,7 @@ addRequirements ast =
    in ast <> Ast reqsSigs [] (snd <$> reqsMod)
 
 buildModule :: BaseModule -> (ModuleHead, ModuleImport)
-buildModule (UnOpModule op@CUnNot) = buildUnOpModules (UnOpModule op) Unsigned
-buildModule (UnOpModule op@CUnNeg) = buildUnOpModules (UnOpModule op) Signed
+buildModule (UnOpModule op) = buildUnOpModules op
 buildModule (BinOpModule op) = binOpModules op
 buildModule FbyModule = fbyModule
 buildModule IfModule = ifModule
@@ -48,53 +46,46 @@ buildModule ConcatModule = concatModule
 buildModule SliceModule = sliceModule
 buildModule SelectModule = selectModule
 
-buildUnOpModules :: BaseModule -> VarType -> (ModuleHead, ModuleImport)
-buildUnOpModules name kind = (moduleHead, show name <> base_suffix)
+buildUnOpModules :: CUnOp -> (ModuleHead, ModuleImport)
+buildUnOpModules op = (moduleHead, show (UnOpModule op) <> base_suffix)
   where
     size = Ident "N"
 
     moduleHead =
       ModuleHead
-        { moduleName = Base name,
+        { moduleName = Base $ UnOpModule op,
           staticVars = [StaticDecl size (Just $ BVSize 1)],
           controlVars = Nothing,
-          inputVars = [WireDecl kind (VariableSize size) $ Ident "arg"],
-          outputVars = NonEmpty.singleton $ WireDecl kind (VariableSize size) $ Ident "res"
+          inputVars = [WireDecl (VariableSize size) $ Ident "arg"],
+          outputVars = NonEmpty.singleton $ WireDecl (VariableSize size) $ Ident "res"
         }
 
 binOpInSize :: Ident
 binOpInSize = Ident "N"
 
-buildBinOpModule :: BaseModule -> VarType -> VarType -> VarSize -> (ModuleHead, ModuleImport)
-buildBinOpModule name kind outKind outSize = (moduleHead, show name <> base_suffix)
+buildBinOpModule :: CBinOp -> VarSize -> (ModuleHead, ModuleImport)
+buildBinOpModule op outSize = (moduleHead, show (BinOpModule op) <> base_suffix)
   where
     moduleHead =
       ModuleHead
-        { moduleName = Base name,
+        { moduleName = Base $ BinOpModule op,
           staticVars = [StaticDecl binOpInSize (Just $ BVSize 1)],
           controlVars = Nothing,
           inputVars =
-            [ WireDecl kind (VariableSize binOpInSize) $ Ident "lhs",
-              WireDecl kind (VariableSize binOpInSize) $ Ident "rhs"
+            [ WireDecl (VariableSize binOpInSize) $ Ident "lhs",
+              WireDecl (VariableSize binOpInSize) $ Ident "rhs"
             ],
-          outputVars = NonEmpty.singleton $ WireDecl outKind outSize $ Ident "res"
+          outputVars = NonEmpty.singleton $ WireDecl outSize $ Ident "res"
         }
 
 binOpModules :: CBinOp -> (ModuleHead, ModuleImport)
-binOpModules op@CBinEq =
-  buildBinOpModule (BinOpModule op) Unsigned Unsigned (FixedSize (BVSize 1))
-binOpModules op@CBinSignedLt =
-  buildBinOpModule (BinOpModule op) Signed Unsigned (FixedSize (BVSize 1))
-binOpModules op@CBinUnsignedLt =
-  buildBinOpModule (BinOpModule op) Unsigned Unsigned (FixedSize (BVSize 1))
-binOpModules op@CBinAdd =
-  buildBinOpModule (BinOpModule op) Unsigned Unsigned (VariableSize binOpInSize)
-binOpModules op@CBinSub =
-  buildBinOpModule (BinOpModule op) Signed Signed (VariableSize binOpInSize)
-binOpModules op@CBinAnd =
-  buildBinOpModule (BinOpModule op) Unsigned Unsigned (VariableSize binOpInSize)
-binOpModules op@CBinOr =
-  buildBinOpModule (BinOpModule op) Unsigned Unsigned (VariableSize binOpInSize)
+binOpModules op@CBinEq = buildBinOpModule op (FixedSize (BVSize 1))
+binOpModules op@CBinSignedLt = buildBinOpModule op (FixedSize (BVSize 1))
+binOpModules op@CBinUnsignedLt = buildBinOpModule op (FixedSize (BVSize 1))
+binOpModules op@CBinAdd = buildBinOpModule op (VariableSize binOpInSize)
+binOpModules op@CBinSub = buildBinOpModule op (VariableSize binOpInSize)
+binOpModules op@CBinAnd = buildBinOpModule op (VariableSize binOpInSize)
+binOpModules op@CBinOr = buildBinOpModule op (VariableSize binOpInSize)
 
 fbyModule :: (ModuleHead, ModuleImport)
 fbyModule = (moduleHead, show FbyModule <> base_suffix)
@@ -110,14 +101,14 @@ fbyModule = (moduleHead, show FbyModule <> base_suffix)
           controlVars =
             Just
               ModuleControl
-                { clockVar = WireDecl Unsigned (FixedSize $ BVSize 1) clockName,
-                  initVar = WireDecl Unsigned (FixedSize $ BVSize 1) initName
+                { clockVar = WireDecl (FixedSize $ BVSize 1) clockName,
+                  initVar = WireDecl (FixedSize $ BVSize 1) initName
                 },
           inputVars =
-            [ WireDecl Unsigned (VariableSize size) $ Ident "init_val",
-              WireDecl Unsigned (VariableSize size) $ Ident "next_val"
+            [ WireDecl (VariableSize size) $ Ident "init_val",
+              WireDecl (VariableSize size) $ Ident "next_val"
             ],
-          outputVars = NonEmpty.singleton $ WireDecl Unsigned (VariableSize size) $ Ident "res"
+          outputVars = NonEmpty.singleton $ WireDecl (VariableSize size) $ Ident "res"
         }
 
 ifModule :: (ModuleHead, ModuleImport)
@@ -131,11 +122,11 @@ ifModule = (moduleHead, show IfModule <> base_suffix)
           staticVars = [StaticDecl size (Just $ BVSize 1)],
           controlVars = Nothing,
           inputVars =
-            [ WireDecl Unsigned (FixedSize $ BVSize 1) $ Ident "cond",
-              WireDecl Unsigned (VariableSize size) $ Ident "true_branch",
-              WireDecl Unsigned (VariableSize size) $ Ident "false_branch"
+            [ WireDecl (FixedSize $ BVSize 1) $ Ident "cond",
+              WireDecl (VariableSize size) $ Ident "true_branch",
+              WireDecl (VariableSize size) $ Ident "false_branch"
             ],
-          outputVars = NonEmpty.singleton $ WireDecl Unsigned (VariableSize size) $ Ident "res"
+          outputVars = NonEmpty.singleton $ WireDecl (VariableSize size) $ Ident "res"
         }
 
 concatModule :: (ModuleHead, ModuleImport)
@@ -150,10 +141,10 @@ concatModule = (moduleHead, show ConcatModule <> base_suffix)
           staticVars = [StaticDecl lhsSize (Just $ BVSize 1), StaticDecl rhsSize (Just $ BVSize 1)],
           controlVars = Nothing,
           inputVars =
-            [ WireDecl Unsigned (VariableSize lhsSize) $ Ident "lhs",
-              WireDecl Unsigned (VariableSize rhsSize) $ Ident "rhs"
+            [ WireDecl (VariableSize lhsSize) $ Ident "lhs",
+              WireDecl (VariableSize rhsSize) $ Ident "rhs"
             ],
-          outputVars = NonEmpty.singleton $ WireDecl Unsigned (SumSize lhsSize rhsSize) $ Ident "res"
+          outputVars = NonEmpty.singleton $ WireDecl (SumSize lhsSize rhsSize) $ Ident "res"
         }
 
 sliceModule :: (ModuleHead, ModuleImport)
@@ -172,8 +163,8 @@ sliceModule = (moduleHead, show SliceModule <> base_suffix)
               StaticDecl sndIndex (Just $ BVSize 1)
             ],
           controlVars = Nothing,
-          inputVars = [WireDecl Unsigned (VariableSize size) $ Ident "arg"],
-          outputVars = NonEmpty.singleton $ WireDecl Unsigned (DeltaSize fstIndex sndIndex) $ Ident "res"
+          inputVars = [WireDecl (VariableSize size) $ Ident "arg"],
+          outputVars = NonEmpty.singleton $ WireDecl (DeltaSize fstIndex sndIndex) $ Ident "res"
         }
 
 selectModule :: (ModuleHead, ModuleImport)
@@ -187,6 +178,6 @@ selectModule = (moduleHead, show SelectModule <> base_suffix)
         { moduleName = Base SelectModule,
           staticVars = [StaticDecl size (Just $ BVSize 1), StaticDecl arg (Just $ BVSize 0)],
           controlVars = Nothing,
-          inputVars = [WireDecl Unsigned (VariableSize size) $ Ident "arg"],
-          outputVars = NonEmpty.singleton $ WireDecl Unsigned (FixedSize $ BVSize 1) $ Ident "res"
+          inputVars = [WireDecl (VariableSize size) $ Ident "arg"],
+          outputVars = NonEmpty.singleton $ WireDecl (FixedSize $ BVSize 1) $ Ident "res"
         }

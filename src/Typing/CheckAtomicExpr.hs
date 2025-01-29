@@ -10,6 +10,7 @@ module Typing.CheckAtomicExpr
     typeConcatExpr,
     typeSelectExpr,
     typeSliceExpr,
+    typeConvertExpr,
     checkCall,
   )
 where
@@ -66,6 +67,7 @@ expectAtomicType typ e = typeAtomicExpr' (unwrap e)
     typeAtomicExpr' (ConcatExpr lhs rhs) = typeConcatExpr e typ lhs rhs
     typeAtomicExpr' (SliceExpr arg i) = typeSliceExpr e typ arg i
     typeAtomicExpr' (SelectExpr arg i) = typeSelectExpr e typ arg i
+    typeAtomicExpr' (ConvertExpr kind arg) = typeConvertExpr e typ kind arg
 
 buildAndUnify :: Pos a -> TypeConstraint -> TExpr TypeCand -> ExprEnv (CanFail AtomExprCand)
 buildAndUnify loc (var, typ) tExpr =
@@ -137,8 +139,8 @@ typeBinOpExpr loc typ@(var, _) op lhs rhs =
 
 typeConcatExpr :: Pos a -> TypeConstraint -> Expr -> Expr -> ExprEnv (CanFail AtomExprCand)
 typeConcatExpr loc typ@(var, _) lhs rhs = do
-  tLhs <- expectAtomicType (raw var) lhs
-  tRhs <- expectAtomicType (raw var) rhs
+  tLhs <- expectAtomicType (boolOrRaw var) lhs
+  tRhs <- expectAtomicType (boolOrRaw var) rhs
   tLhsSize <- unifToExpr . collapseA $ getFixedSize lhs . getTypeCand <$> tLhs
   tRhsSize <- unifToExpr . collapseA $ getFixedSize rhs . getTypeCand <$> tRhs
   collapseA $ buildConcat <$> tLhsSize <*> tRhsSize <*> tLhs <*> tRhs
@@ -240,3 +242,13 @@ typeSelectExpr loc typ@(var, _) arg index = do
             >>= buildAndUnify loc typ . SelectTExpr tArg (BVSize index)
         else
           return $ reportError loc $ "Select bus does not exists. The argument has " <> show busSize <> " buses."
+
+typeConvertExpr :: Pos a -> TypeConstraint -> BitVectorKind -> Expr -> ExprEnv (CanFail AtomExprCand)
+typeConvertExpr loc typ@(var, _) kind arg = do
+  tArg <- expectAtomicType (rawSigOrUnsig var) arg
+  tArgSize <- unifToExpr . collapseA $ getFixedSize arg . getTypeCand <$> tArg
+  collapseA $ buildConvert <$> tArgSize <*> tArg
+  where
+    buildConvert busSize (_, tArg, _) =
+      unifToExpr (fromAtomicType loc (TBitVector kind busSize))
+        >>= buildAndUnify loc typ . ConvertTExpr tArg

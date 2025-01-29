@@ -24,10 +24,11 @@ data TransformState = TransformState
 
 type TransformMonad = State TransformState
 
-defVar :: (VarId -> Int -> CVar) -> VarId -> TExpr AtomicTType -> TransformMonad CVar
+defVar :: (VarId -> Int -> CVar) -> VarId -> TExpr AtomicTType -> TransformMonad CVal
 defVar gVar vId expr = transformExpr vId expr >>= defWithAct gVar vId (exprType expr)
 
-defWithAct :: (VarId -> Int -> CVar) -> VarId -> AtomicTType -> CAction -> TransformMonad CVar
+defWithAct :: (VarId -> Int -> CVar) -> VarId -> AtomicTType -> CAction -> TransformMonad CVal
+defWithAct _ _ _ (SetValCAct val) = return val
 defWithAct gVar vId typ act = state $ freshVar' (gVar vId)
   where
     freshVar' genVar TransformState {newEqs, newVarsType, nextVarId} =
@@ -35,7 +36,7 @@ defWithAct gVar vId typ act = state $ freshVar' (gVar vId)
           newNewEqs = SimpleCEq v act : newEqs
           newNewVarsType = Map.insert v typ newVarsType
           newNextId = nextVarId + 1
-       in (v, TransformState newNewEqs newNewVarsType newNextId)
+       in (Right v, TransformState newNewEqs newNewVarsType newNextId)
 
 runTransformMonad :: NodeContext VarId -> TransformMonad (NonEmpty CEquation) -> CNode
 runTransformMonad nCtx m =
@@ -56,11 +57,13 @@ transformEq (FbyTEq v initE nextE) = do
   nextVar <- defVar FbyNext v nextE
   return $ SimpleCEq (FromVarId v) (FbyCAct initVar nextVar)
 transformEq (CallTEq vars node args) =
-  return $ CallCEq (FromVarId <$> vars) node (FromVarId <$> args)
+  return $ CallCEq (FromVarId <$> vars) node (bimap buildCConst FromVarId <$> args)
+  where
+    buildCConst (cst, typ) = CConstant (typeSize typ) cst
 
 transformExpr :: VarId -> TExpr AtomicTType -> TransformMonad CAction
-transformExpr _ (ConstantTExpr cst typ) = return $ ConstantCAct (CConstant (typeSize typ) cst)
-transformExpr _ (VarTExpr vId _) = return $ VarCAct (FromVarId vId)
+transformExpr _ (ConstantTExpr cst typ) = return . SetValCAct . Left $ CConstant (typeSize typ) cst
+transformExpr _ (VarTExpr vId _) = return . SetValCAct . Right $ FromVarId vId
 transformExpr v (UnOpTExpr op arg _) = defVar (UnOpArg op) v arg >>= transformUnOp op
 transformExpr v (BinOpTExpr op lhs rhs _) = do
   lVar <- defVar (BinOpArg op) v lhs
@@ -72,15 +75,16 @@ transformExpr v (ConcatTExpr lhs rhs _) =
   ConcatCAct <$> defVar ConcatFirst v lhs <*> defVar ConcatSecond v rhs
 transformExpr v (SliceTExpr arg index _) = SliceCAct <$> defVar SliceArg v arg <*> pure index
 transformExpr v (SelectTExpr arg index _) = SelectCAct <$> defVar SelectArg v arg <*> pure index
+transformExpr v (ConvertTExpr arg _) = SetValCAct <$> defVar ConvertArg v arg
 
-transformUnOp :: UnOp -> CVar -> TransformMonad CAction
+transformUnOp :: UnOp -> CVal -> TransformMonad CAction
 transformUnOp UnNeg arg = return $ UnOpCAct CUnNeg arg
 transformUnOp UnNot arg = return $ UnOpCAct CUnNot arg
 
 opKind :: AtomicTType -> AtomicTType -> CBinOp
 opKind ltyp _ = if isSignedOp ltyp then CBinSignedLt else CBinUnsignedLt
 
-transformBinOp :: VarId -> BinOp -> (AtomicTType, CVar) -> (AtomicTType, CVar) -> TransformMonad CAction
+transformBinOp :: VarId -> BinOp -> (AtomicTType, CVal) -> (AtomicTType, CVal) -> TransformMonad CAction
 transformBinOp _ BinEq (_, lhs) (_, rhs) = return $ BinOpCAct CBinEq lhs rhs
 transformBinOp v BinNeq (_, lhs) (_, rhs) =
   defWithAct (NotIntroduced BinNeq) v TBool (BinOpCAct CBinEq lhs rhs) <&> UnOpCAct CUnNot

@@ -50,34 +50,34 @@ data CVar
   | ConcatSecond VarId Int
   | SliceArg VarId Int
   | SelectArg VarId Int
+  | ConvertArg VarId Int
   deriving (Eq, Ord)
 
+type CVal = Either CConstant CVar
+
 data CAction
-  = -- | A Constant Action: @10@ or @false@
-    ConstantCAct CConstant
-  | -- | A Variable Action
-    VarCAct CVar
+  = SetValCAct CVal
   | -- | A Unary Action: @not e@ or @-e@
-    UnOpCAct CUnOp CVar
+    UnOpCAct CUnOp CVal
   | -- | A Binary Action: @a + b@, @a <> b@, @a and b@, ...
-    BinOpCAct CBinOp CVar CVar
+    BinOpCAct CBinOp CVal CVal
   | -- | Conditional Action: @if c then a else b@
-    IfCAct {ifCond :: VarId, ifTrue :: CVar, ifFalse :: CVar}
+    IfCAct {ifCond :: VarId, ifTrue :: CVal, ifFalse :: CVal}
   | -- | Fby Action: @a fby b@
-    FbyCAct {initVar :: CVar, nextVar :: CVar}
+    FbyCAct {initVar :: CVal, nextVar :: CVal}
   | -- | Concat Expression: @a ++ b@
-    ConcatCAct CVar CVar
+    ConcatCAct CVal CVal
   | -- | Slice Expression: @a[1:3]@
-    SliceCAct CVar (BVSize, BVSize)
+    SliceCAct CVal (BVSize, BVSize)
   | -- | Select Expression: @a[1]@
-    SelectCAct CVar BVSize
+    SelectCAct CVal BVSize
   deriving (Show)
 
 data CEquation
   = -- | The simplest equation possible: @x = e@
     SimpleCEq CVar CAction
   | -- | A call to another node : @(x, ..., z) = f(a, ..., b)@
-    CallCEq (NonEmpty CVar) NodeIdent [CVar]
+    CallCEq (NonEmpty CVar) NodeIdent [CVal]
   deriving (Show)
 
 type CNode = Node CVar CEquation
@@ -98,6 +98,7 @@ instance Show CVar where
   show (ConcatSecond varId cVarId) = varIdPrefix varId <> "_concat_snd_" <> show cVarId
   show (SliceArg varId cVarId) = varIdPrefix varId <> "_sliced_" <> show cVarId
   show (SelectArg varId cVarId) = varIdPrefix varId <> "_selected_" <> show cVarId
+  show (ConvertArg varId cVarId) = varIdPrefix varId <> "_conv_" <> show cVarId
 
 instance Show CConstant where
   show :: CConstant -> String

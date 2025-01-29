@@ -50,6 +50,7 @@ typeExpr typ e = typeExpr' (unwrap e)
     typeExpr' (ConcatExpr lhs rhs) = concatExpr e typ lhs rhs
     typeExpr' (SliceExpr arg i) = sliceExpr e typ arg i
     typeExpr' (SelectExpr arg i) = selectExpr e typ arg i
+    typeExpr' (ConvertExpr kind arg) = convertExpr e typ kind arg
 
 invalidTypeForExpr :: Pos a -> EqRHS -> CanFail b
 invalidTypeForExpr loc eTyp = reportError loc $ "This expression does not have the type " <> show eTyp <> "."
@@ -81,6 +82,10 @@ sliceExpr loc (TreeLeaf typ) arg index = fmap TreeLeaf <$> typeSliceExpr loc typ
 selectExpr :: Pos a -> EqRHS -> Expr -> Int -> ExprEnv (CanFail ExprCand)
 selectExpr loc rhs@(TreeNode _) _ _ = return $ invalidTypeForExpr loc rhs
 selectExpr loc (TreeLeaf typ) arg index = fmap TreeLeaf <$> typeSelectExpr loc typ arg index
+
+convertExpr :: Pos a -> EqRHS -> BitVectorKind -> Expr -> ExprEnv (CanFail ExprCand)
+convertExpr loc rhs@(TreeNode _) _ _ = return $ invalidTypeForExpr loc rhs
+convertExpr loc (TreeLeaf typ) kind arg = fmap TreeLeaf <$> typeConvertExpr loc typ kind arg
 
 buildAndUnify :: Pos a -> EqRHS -> Tree (TExpr TypeCand) -> ExprEnv (CanFail ExprCand)
 buildAndUnify loc lhs rhs = do

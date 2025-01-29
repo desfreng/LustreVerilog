@@ -24,6 +24,7 @@ data ExprDesc
   | IdentExpr (Pos Ident)
   | UnOpExpr UnOp Expr
   | BinOpExpr BinOp Expr Expr
+  | ConvertExpr BitVectorKind Expr
   | ConcatExpr Expr Expr
   | SliceExpr Expr (Int, Int)
   | SelectExpr Expr Int

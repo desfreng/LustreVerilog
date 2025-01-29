@@ -21,7 +21,7 @@ import Commons.Ids
 import Commons.Position
 import Commons.Types
 import Commons.TypingError
-import Control.Monad (zipWithM_)
+import Control.Monad (zipWithM)
 import Control.Monad.Reader
 import Control.Monad.State
 import Data.Functor
@@ -120,13 +120,18 @@ buildFbyEq varOrig initFby nextFby typeCand = do
 buildCallEq :: (NodeIdent, NodeSignature) -> [TExpr TypeCand] -> ExprEnv (NonEmpty (VarId, AtomicTType))
 buildCallEq (nodeId, nodeSig) args = do
   outVarsIds <- mapM freshOutVarFromTyp (outputType nodeSig)
-  inVarsIds <- fmap fst <$> mapM freshInVarFromTyp (inputTypes nodeSig)
-  _ <- zipWithM_ (\v e -> addEq $ SimpleTEq v e) inVarsIds args
-  () <- addEq (CallTEq (fst <$> outVarsIds) nodeId inVarsIds)
+  inVarsArgs <- zipWithM freshInVarFromTyp (inputTypes nodeSig) args
+  () <- addEq (CallTEq (fst <$> outVarsIds) nodeId inVarsArgs)
   return outVarsIds
   where
     freshOutVarFromTyp t = freshVar (OutputCallVar nodeId) (WithType t) <&> (,t)
-    freshInVarFromTyp (_, t) = freshVar (InputCallVar nodeId) (WithType t) <&> (,t)
+
+    freshInVarFromTyp _ (ConstantTExpr cst typ) = return $ Left (cst, typ)
+    freshInVarFromTyp _ (VarTExpr var _) = return $ Right var
+    freshInVarFromTyp (_, t) e = do
+      newVar <- freshVar (InputCallVar nodeId) (WithType t)
+      () <- addEq $ SimpleTEq newVar e
+      return $ Right newVar
 
 runExprEnv :: NodeEnvironment VarIdent -> ExprEnv (CanFail (NonEmpty TCandEq)) -> NodeEnv (CanFail TNode)
 runExprEnv nodeEnv m = toNodeEnv (runExprEnv' nodeEnv m)
