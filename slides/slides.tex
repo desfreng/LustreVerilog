@@ -1,6 +1,5 @@
 \documentclass{beamer}
 \usepackage[T1]{fontenc}
-\usepackage[utf8]{inputenc}
 \usepackage[english]{babel}
 \usepackage[justification=centering]{caption}
 \usepackage{amsmath}
@@ -125,6 +124,7 @@
 
 \begin{frame}{Specifications}
     \begin{itemize}
+        \setlength{\itemsep}{5pt}
         \item Compile a subset of Lustre into \emph{gate-level} Verilog.
         \item Maintain \emph{retrocompatible} syntax with existing Lustre compilers.
         \item Add operations to handle buses.
@@ -249,7 +249,7 @@
     \pause{}
     \vfill
     \centering
-    \textbf{\Large Choose Haskell. Be functional. Be safe. Be pure.}
+    \textbf{\Large Choose Haskell. Be functional. Be safe.\\Be pure.}
 \end{frame}
 
 \subsection{Compiler Stages}
@@ -262,52 +262,220 @@
     \end{itemize}
 \end{frame}
 
+\begin{frame}[fragile]{Parsing Tree}
+    \begin{footnotesize}
+        \begin{minted}{haskell}
+type Expr = Pos ExprDesc
+data ExprDesc
+  = ConstantExpr Constant
+  | IdentExpr (Pos Ident)
+  | UnOpExpr UnOp Expr
+  | BinOpExpr BinOp Expr Expr
+  | ConvertExpr BitVectorKind Expr
+  | ConcatExpr Expr Expr
+  | SliceExpr Expr (Int, Int)
+  | SelectExpr Expr Int
+  | AppExpr (Pos Ident) [Expr]
+  | TupleExpr (BiList Expr)
+  | IfExpr Expr Expr Expr
+  | FbyExpr Expr Expr
+  deriving (Show, Eq)
+
+type Pattern = Tree (Pos Ident)
+data Equation = Equation Pattern Expr
+    deriving (Show, Eq)
+        \end{minted}
+    \end{footnotesize}
+\end{frame}
+
+\begin{frame}[fragile]{Typing Tree}
+    \begin{footnotesize}
+        \begin{minted}{haskell}
+data TExpr atyp
+  = ConstantTExpr Constant atyp
+  | VarTExpr VarId atyp
+  | UnOpTExpr UnOp (TExpr atyp) atyp
+  | BinOpTExpr BinOp (TExpr atyp) (TExpr atyp) atyp
+  | IfTExpr VarId (TExpr atyp) (TExpr atyp) atyp
+  | ConcatTExpr (TExpr atyp) (TExpr atyp) atyp
+  | SliceTExpr (TExpr atyp) (BVSize, BVSize) atyp
+  | SelectTExpr (TExpr atyp) BVSize atyp
+  | ConvertTExpr (TExpr atyp) atyp
+  deriving (Show)
+
+type TArg = Either (TConstant atyp) VarId
+data TEquation atyp
+  = SimpleTEq VarId (TExpr atyp)
+  | FbyTEq VarId (TExpr atyp) (TExpr atyp)
+  | CallTEq (NonEmpty VarId) NodeIdent [TArg]
+  deriving (Show)
+        \end{minted}
+    \end{footnotesize}
+\end{frame}
+
 \begin{frame}{Typing}
     \begin{itemize}
         \setlength{\itemsep}{8pt}
-        \item Constants !!!
-        \item Monads Used: xx.
+        \item Constants are typed dynamically:
+              \[10: \Raw_{\geqslant 4}|\Unsigned_{\geqslant 4}|\Signed_{\geqslant 5}\]
+        \item Equation normalization on the fly.
+        \item Monads Used: 11
+              ($+6$ for Typing)
+              ($+3$ for Causality)
     \end{itemize}
 \end{frame}
 
-\begin{frame}{Normalization}
-    \begin{itemize}
-        \setlength{\itemsep}{8pt}
-        \item
-        \item Monads Used: xx.
-    \end{itemize}
+\begin{frame}[fragile]{Expression Flattening}
+    \begin{small}
+        \begin{minted}{haskell}
+data CAction
+  = SetValCAct CVal
+  | UnOpCAct CUnOp CVal
+  | BinOpCAct CBinOp CVal CVal
+  | IfCAct {ifCond :: VarId, ifTrue :: CVal, ifFalse :: CVal}
+  | FbyCAct {initVar :: CVal, nextVar :: CVal}
+  | ConcatCAct CVal CVal
+  | SliceCAct CVal (BVSize, BVSize)
+  | SelectCAct CVal BVSize
+  deriving (Show)
+
+data CEquation
+  = SimpleCEq CVar CAction
+  | CallCEq (NonEmpty CVar) NodeIdent [CVal]
+  deriving (Show)
+        \end{minted}
+    \end{small}
+
+    Monads Used: 12 $(+ 1)$.
 \end{frame}
 
-\begin{frame}{Verilog Conversion}
-    \begin{itemize}
-        \setlength{\itemsep}{8pt}
-        \item
-        \item Monads Used: xx.
-    \end{itemize}
+\begin{frame}[fragile]{Verilog Conversion}
+    \begin{small}
+        \begin{minted}{haskell}
+data ModuleInst = ModuleInst
+  { name :: ModuleName,
+    staticArgs :: [StaticValue],
+    controlArgs :: Maybe (ModuleControl Ident),
+    inArgs :: [Either Constant Ident],
+    outArgs :: NonEmpty Ident
+  }
+  deriving (Show)
+
+data Expr
+  = AssignExpr Ident (Either Constant Ident)
+  | InstExpr ModuleInst
+  deriving (Show)
+        \end{minted}
+    \end{small}
+
+    Monads Used: 12 $(+ 0)$.
+\end{frame}
+
+\begin{frame}[fragile]{Verilog Output}
+    \begin{small}
+        \begin{minted}{verilog}
+    module node_main (
+        input wire clock,
+        input wire init,
+        input wire [7:0] var_x,
+        input wire [7:0] var_y,
+        output wire [7:0] var_res
+    );
+        lustre_and #(
+            .N(8)
+        ) call_lustre_and_1 (
+            .lhs(var_x),
+            .rhs(var_y),
+            .res(var_res)
+        );
+    endmodule
+        \end{minted}
+    \end{small}
+
+    Monads Used: 13 $(+ 1)$.
 \end{frame}
 
 \subsection{Standard Library}
 
-\begin{frame}{Standard Library Design}
+\begin{frame}[fragile]{Standard Library Design}
+    \begin{minipage}{0.49\textwidth}
+        \begin{minted}[fontsize=\footnotesize]{verilog}
+module lustre_and #(
+    parameter N = 1
+) (
+    input  wire [N-1:0] lhs,
+    input  wire [N-1:0] rhs,
+    output wire [N-1:0] res
+);
+  and (res, lhs, rhs);
+endmodule
+        \end{minted}
+    \end{minipage}
+    \hfill
+    \begin{minipage}{0.49\textwidth}
+        \begin{minted}[fontsize=\footnotesize]{verilog}
+module lustre_sub #(parameter N = 1)
+    ( ... );
 
+  wire [N-1:0] new_rhs;
+  not (new_rhs, rhs);
+
+  internal_lustre_adder #(.N(N))
+    adder (
+      .lhs(lhs), .rhs(new_rhs),
+      .carry_in(1'd1), .res(res),
+      .flag_Z(), .flag_N(),
+      .flag_C(), .flag_V());
+endmodule
+        \end{minted}
+    \end{minipage}
 \end{frame}
 
-\begin{frame}{The Lustre ALU}
+\begin{frame}[fragile]{The Lustre ALU}
+    \begin{footnotesize}
+        \begin{minted}{verilog}
+    module internal_lustre_adder #(parameter N = 1) ( ... );
+        wire [N:0] carry;
+        assign carry[0] = carry_in;
 
-\end{frame}
+        genvar i;
+        generate
+        for (i = 0; i < N; i = i + 1) begin : full_adder_gen
+            internal_lustre_bit_adder single_bit_adder (
+                .a(lhs[i]), .b(rhs[i]), .carry_in(carry[i]),
+                .res(res[i]), .carry_out(carry[i+1]));
+        end
+        endgenerate
 
-\begin{frame}{Examples}
-
+        assign flag_Z = ~(|res);
+        assign flag_N = res[N-1];
+        assign flag_C = carry[N];
+        xor (flag_V, carry[N], carry[N-1]);
+    endmodule
+        \end{minted}
+    \end{footnotesize}
 \end{frame}
 
 \section{Results}
 
-\begin{frame}{Some Stats}
-
+\begin{frame}{In Short}
+    \begin{itemize}
+        \setlength{\itemsep}{5pt}
+        \item $\approx 2700$ lines of Haskell,
+        \item $\approx 300$ lines of Verilog,
+        \item $\approx 700$ lines of C++.
+    \end{itemize}
 \end{frame}
 
 \begin{frame}{Possibles Improvements}
-
+    \begin{itemize}
+        \setlength{\itemsep}{5pt}
+        \item Enlarge the Lustre core (\texttt{pre}, \texttt{->}, \texttt{merge}, \dots),
+        \item Add custom data types and structures,
+        \item Improve Verilog code generation,
+        \item Add buffer registers to reduce the critical path,
+        \item Define a Lustre processor!
+    \end{itemize}
 \end{frame}
 
 \end{document}

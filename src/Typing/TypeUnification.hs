@@ -62,6 +62,13 @@ data TypeKind
   | Bool
   | Custom TypeIdent [TypeCand]
 
+showNumeric :: NonEmpty BitVectorKind -> UnsignedSize -> SignedSize -> String
+showNumeric numKind uS sS = intercalate "|" . NonEmpty.toList $ showNumKind uS sS <$> numKind
+  where
+    showNumKind (UnSig (BVSize s)) _ Raw = "r(>=" <> show s <> ")"
+    showNumKind (UnSig (BVSize s)) _ Unsigned = "u(>=" <> show s <> ")"
+    showNumKind _ (Sig (BVSize s)) Signed = "i(>=" <> show s <> ")"
+
 newtype TypeCand = TypeCand Int
   deriving (Eq, Ord)
 
@@ -160,17 +167,12 @@ instance MonadUnif TypeCand TypeKind TypeUnifier where
       showAtom' (BitVector Raw (BVSize i)) = return $ "r" <> show i
       showAtom' (BitVector Unsigned (BVSize i)) = return $ "u" <> show i
       showAtom' (BitVector Signed (BVSize i)) = return $ "i" <> show i
-      showAtom' (Numeric numKind uS sS) =
-        return $ intercalate "|" . NonEmpty.toList $ showNumKind uS sS <$> numKind
+      showAtom' (Numeric numKind uS sS) = return $ showNumeric numKind uS sS
       showAtom' (Custom x l) = do
         lStr <- mapM showId l
         let lStrParens s = "(" <> s <> ")"
             customStr = show x
          in return $ "Custom " <> customStr <> " " <> unwords (lStrParens <$> lStr)
-
-      showNumKind (UnSig (BVSize uS)) _ Raw = "r(>=" <> show uS <> ")"
-      showNumKind (UnSig (BVSize uS)) _ Unsigned = "u(>=" <> show uS <> ")"
-      showNumKind _ (Sig (BVSize sS)) Signed = "i(>=" <> show sS <> ")"
 
   unifyCand ::
     Pos a -> (TypeCand, TypeKind) -> (TypeCand, TypeKind) -> TypeUnifier (CanFail TypeKind)
@@ -384,5 +386,5 @@ buildMap st =
 
     fromTypeKind _ Bool = return $ pure TBool
     fromTypeKind _ (BitVector kind size) = return $ pure (TBitVector kind size)
-    fromTypeKind err (Numeric {}) = return $ err "Unable to find the bit-vector size of this expression."
+    fromTypeKind err (Numeric kind uS sS) = return . err $ "Unable to find the bit-vector size of this expression. Type: " <> showNumeric kind uS sS <> "."
     fromTypeKind _ (Custom tId args) = fmap (TCustom tId) . sequenceA <$> mapM getTyp args
