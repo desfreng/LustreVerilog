@@ -31,7 +31,7 @@ compilerOptionsParser =
     <$> ( flag' GetStdLibDir (long "stdlib-dir" <> help "Get stdlib directory")
             <|> flag' ParsingStage (long "parse-only" <> help "Stop at parsing stage")
             <|> flag' TypingStage (long "type-only" <> help "Stop at typing stage")
-            <|> flag' CompileAst (long "export-compiled" <> help "Stop before exporting to Verilog")
+            <|> flag' CompileAst (long "transform-only" <> help "Stop before exporting to Verilog")
             <|> ( CompileStage
                     <$> strOption
                       ( long "main-node"
