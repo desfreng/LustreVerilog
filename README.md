@@ -1,6 +1,6 @@
 # LustreVerilog
 
-A simple and flexible compiler for translating Lustre code to Verilog. This project was developed as part of the XXX course taught by XXX and XXX at the ENS during the 2024-2025 academic year.
+A simple and flexible compiler for translating Lustre code to Verilog. This project was developed as part of the **Models and languages for programming reactive systems** course taught by **Timothy Bourke** and **Marc Pouzet** at the ENS during the 2024-2025 academic year.
 
 ## Overview
 
@@ -93,35 +93,27 @@ The project includes examples in the `test/` directory. To run these examples:
 
 ```
 LustreVerilog/
-├── app/                   # Main application entry point (Main.hs)
-├── src/                   # Source code of the compiler
-│   ├── Commons/           # Common data structures and utilities
-│   │   └── ...
-│   ├── Compiling/         # Compilation logic
-│   │   └── ...            # AST transformation functions
-│   ├── LustreVerilog.hs   # Main compiler module
-│   ├── Parsing/              # Lustre parsing logic
-│   │   └── ...                # Parser implementation
-│   ├── Typing/               # Type checking logic
-│   │   └── ...            # Type unification algorithm
-│   └── Verilog/               # Verilog-related utilities
-│       └── ...                # Verilog code generation functions
-├── stdlib/                   # Standard library of Lustre nodes (Verilog implementations)
-│   ├── internal/             # Internal Verilog implementations (e.g., for adders)
-│   │   └── ...
-│   └── ...
-├── test/                     # Example Lustre files and testbenches
-│   ├── add/                  # Example: Adder design
+├── app/                 # Main application entry point (Main.hs)
+├── src/                 # Source code of the compiler
+│   ├── Commons/             # Common data structures and utilities
+│   ├── Compiling/           # Compilation logic
+│   ├── LustreVerilog.hs     # Main compiler module
+│   ├── Parsing/             # Lustre parsing logic
+│   ├── Typing/              # Type checking logic
+│   └── Verilog/             # Verilog-related utilities
+├── stdlib/              # Standard library of Lustre nodes
+│   └── internal/            # Internal Verilog implementations
+├── test/                # Example Lustre files and testbenches
+│   ├── add/                 # Example: Adder design
 │   │   ├── main.lus             # Lustre specification
-│   │   └── top.cpp              # C++ testbench wrapper
-│   ├── ...                     # Other test examples (and, concat, eq, etc.)
-├── CMakeLists.txt                 # CMake build configuration file
-├── LICENSE                      # License file
-├── LustreVerilog.cabal # Cabal package description file
-├── README.md                    # This file
-├── slides/                     # Slides for the project presentation
-│   └── ...
-└── ...                        # Other project files
+│   │   └── top.c                # C++ testbench wrapper
+│   └── ...                  # Other test examples (and, concat, eq, etc.)
+├── CMakeLists.txt       # CMake build configuration file
+├── LICENSE              # License file
+├── LustreVerilog.cabal  # Cabal package description file
+├── README.md            # This file
+└── slides/              # Slides for the project presentation
 ```
 
 ## License
+This project is licensed under the GPL3 license. See the `LICENSE` file for details.
