@@ -15,35 +15,30 @@ node fullAdder1 (a, b, carryIn: r<1>)
     carryOut = a_and_b or a_and_carryIn or b_and_carryIn;
   tel
 
-node toRaw (x: bool) returns (y: r<1>);
-let
-  y = x;
-tel
-
 node fullAdder (x: r<N>; y: r<N>; cIn: r<1>) returns (res: r<N>; carryOut: r<1>);
   size N;
   where
     N > 0;
-  when 1 == N
-     let
-       (res, carryOut) = fullAdder1 (x, y, cIn);
-     tel
-   otherwise
-     var
-       loRes: r<N-1>;
-       loCarry, hiRes: r<1>;
-     let
-       (loRes, loCarry) = fullAdder (x[0:N-1], y[0:N-1], cIn);
-       (hiRes, carryOut) = fullAdder1 (toRaw (x[N-1]), toRaw (y[N-1]), loCarry);
-       res = hiRes ++ loRes;
-     tel
+  when N <= 1:
+    let
+      (res, carryOut) = fullAdder1 (x, y, cIn);
+    tel
+  otherwise
+    var
+      loRes: r<N-1>;
+      loCarry, hiRes: r<1>;
+    let
+      (loRes, loCarry) = fullAdder (x[0:N-1], y[0:N-1], cIn);
+      (hiRes, carryOut) = fullAdder1 (x[N-1:N], y[N-1:N], loCarry);
+      res = hiRes ++ loRes;
+    tel
 
-node main(x: r<3>; y: r<3>) returns (res: bool);
+node main(x: r<8>; y: r<8>) returns (isGood: bool);
   var
-    a: r<3>;
-    b: r<1>;
+    cOut: bool;
+    res: r<8>;
 let
-    (a, b) = fullAdder(x, y, 0);
-    res = a[0] and a[1] and a[2];
+  (res, cOut) = fullAdder(x, y, 0);
+  isGood = unsigned res == unsigned x + unsigned y;
 tel
 

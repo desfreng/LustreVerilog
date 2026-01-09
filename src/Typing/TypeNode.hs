@@ -3,22 +3,20 @@
 
 module Typing.TypeNode (typeAst) where
 
-import Commons.Ast
+import Commons.Ast (Body (..), Interval, NodeBody (NodeBody))
 import Commons.Error (CanFail, collapse, collapseA, reportError)
-import Commons.Ids (Ident, NodeIdent, VarId (..), VarIdent)
+import Commons.Ids (Ident, NodeIdent, VarIdent)
 import Commons.Position (Pos (..))
 import Commons.Size (SimpleSize)
 import Commons.Tree (Tree (..))
 import Commons.Types (AtomicTType (..))
 import Control.Monad (join)
 import Data.List.NonEmpty (NonEmpty)
-import qualified Data.Map as Map
-import Data.Maybe
-import Debug.Trace
+import Data.Maybe (catMaybes)
 import Parsing.Ast
 import Typing.Ast (TAst, TBody, TEquation)
 import Typing.ExprEnv (ExprEnv, findVariable, runExprEnv)
-import Typing.Intervals
+import Typing.Intervals (IntervalResult (..), normalizeInterval)
 import Typing.NodeEnv (NodeEnv, registerNode, runNodeEnv)
 import Typing.NodeVarEnv
 import Typing.SizeEnv (SizeInfo, buildNodeSizeEnv, restrictToInterval)
@@ -76,13 +74,12 @@ typeBody PComposedBody {whenCriterion, whenBody, otherwiseBody, otherwiseLoc} nI
 
 typeNodeBody :: NodeIdent -> SizeInfo -> VarMapping -> PNodeBody -> NodeEnv (CanFail TBody)
 typeNodeBody nId sInfo vMap PNodeBody {pbodyLocals, pbodyEqs} = do
-  let newVMap = fmap traceShowId $ addLocals sInfo vMap $ mapM_ (typeDecl addLocalVariable) pbodyLocals
+  let newVMap = addLocals sInfo vMap $ mapM_ (typeDecl addLocalVariable) pbodyLocals
   let tnodeEqs = fmap join . sequenceA <$> mapM typeEq pbodyEqs
   normEqs <- collapseA $ runExprEnv tnodeEqs nId <$> newVMap <*> pure sInfo
   return $ do
-    nodeVMap <- newVMap
     (locaVMap, locNormEq) <- normEqs
-    return $ NodeBody (Map.mapKeysMonotonic FromIdent nodeVMap <> locaVMap) locNormEq
+    return $ NodeBody locaVMap locNormEq
 
 typeEq :: Equation -> ExprEnv (CanFail (NonEmpty (TEquation TypeCand)))
 typeEq (Equation p e) = do

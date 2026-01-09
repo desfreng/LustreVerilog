@@ -110,4 +110,4 @@ isSignedOp :: AtomicTType -> Bool
 isSignedOp (TBitVector Signed _) = True
 isSignedOp (TBitVector Unsigned _) = False
 isSignedOp (TBitVector Raw _) = False
-isSignedOp _ = error "This type canot be signed."
+isSignedOp _ = error "This type cannot be signed."

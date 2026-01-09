@@ -103,10 +103,10 @@ a >=. b = GE (a -. b)
 (==.) :: (ToILPExpr a) => a -> RatioInt -> Constraint
 a ==. b = EQ (a -. b)
 
-newtype BuildProblem a = BuildProblem (State Problem a)
+newtype BuildProblem tag a = BuildProblem (State (Problem tag) a)
   deriving (Functor, Applicative, Monad)
 
-addVar :: VarType -> VarTag -> BuildProblem Var
+addVar :: VarType -> VarTag a -> BuildProblem a Var
 addVar vKind vTag = BuildProblem $ state pbAddVar
   where
     pbAddVar st@Problem {nbVars, intVars, varTags} =
@@ -121,10 +121,10 @@ addVar vKind vTag = BuildProblem $ state pbAddVar
               }
        in (Var v, newS)
 
-namedVar :: VarType -> String -> BuildProblem Var
+namedVar :: VarType -> a -> BuildProblem a Var
 namedVar vKind = addVar vKind . Tagged
 
-freshVar :: VarType -> BuildProblem Var
+freshVar :: VarType -> BuildProblem a Var
 freshVar vKind = addVar vKind NoTag
 
 normILPExpr :: Map a RatioInt -> RatioInt -> (Map a RatioInt, RatioInt)
@@ -132,7 +132,7 @@ normILPExpr c k
   | k < 0 = (scaleMap (-1) c, -k)
   | otherwise = (c, k)
 
-toEqualZero :: Constraint -> BuildProblem (Map VarID RatioInt, RatioInt)
+toEqualZero :: Constraint -> BuildProblem a (Map VarID RatioInt, RatioInt)
 toEqualZero (EQ ILPExpr {coeffs, constant}) = pure $ normILPExpr coeffs (-constant)
 toEqualZero (LE e) = do
   slack <- addVar RealVar SlackVar
@@ -143,22 +143,22 @@ toEqualZero (GE e) = do
   let ILPExpr {coeffs, constant} = e -. slack
   return $ normILPExpr coeffs (-constant)
 
-suchThat :: Constraint -> BuildProblem ()
+suchThat :: Constraint -> BuildProblem a ()
 suchThat c = do
   cEqZ <- toEqualZero c
   BuildProblem $ modify' (\st@Problem {constraints} -> st {constraints = cEqZ : constraints})
 
-setObjective :: ObjectiveType -> ILPExpr -> BuildProblem ()
+setObjective :: ObjectiveType -> ILPExpr -> BuildProblem a ()
 setObjective t e =
   BuildProblem $ modify' (\st -> st {objective = (coeffs e, constant e), objectiveType = t})
 
-maximize :: ILPExpr -> BuildProblem ()
+maximize :: ILPExpr -> BuildProblem a ()
 maximize = setObjective Maximize
 
-minimize :: ILPExpr -> BuildProblem ()
+minimize :: ILPExpr -> BuildProblem a ()
 minimize = setObjective Minimize
 
-initialProblem :: Problem
+initialProblem :: Problem a
 initialProblem =
   Problem
     { nbVars = 0,
@@ -169,8 +169,8 @@ initialProblem =
       intVars = S.empty
     }
 
-buildProblem :: BuildProblem () -> Problem
+buildProblem :: BuildProblem a () -> Problem a
 buildProblem (BuildProblem m) = execState m initialProblem
 
-changeProblem :: Problem -> BuildProblem () -> Problem
+changeProblem :: Problem a -> BuildProblem a () -> Problem a
 changeProblem s (BuildProblem m) = execState m s

@@ -77,7 +77,7 @@ fillObj t origCost s@SimplexTableau {tableau, basis} =
           orgCost = if i == 0 then 0 else cost V.! (i - 1)
        in MV.write v i (orgCost - p)
 
-buildState :: Problem -> (SimplexTableau, SimplexData)
+buildState :: Problem a -> (SimplexTableau, SimplexData)
 buildState Problem {nbVars, objective, constraints} =
   ( fillObj Minimize basePhase1Obj $
       SimplexTableau
@@ -236,7 +236,7 @@ extractObjective :: ObjectiveType -> SimplexTableau -> RatioInt
 extractObjective Minimize SimplexTableau {tableau} = -getElem 0 0 tableau
 extractObjective Maximize SimplexTableau {tableau} = getElem 0 0 tableau
 
-solveLinearProgram :: Problem -> Result
+solveLinearProgram :: Problem a -> Result a
 solveLinearProgram problem =
   let objType = objectiveType problem
       (s, d) = buildState problem

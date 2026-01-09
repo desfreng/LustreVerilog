@@ -1,6 +1,6 @@
-node main(x: r5; y: r8) returns (res: r16);
-var zero: r3;
+node main(x: r<5>; y: r<8>) returns (res: r<16>);
+  var zero: r<3>;
 let
-    zero = 0;
-    res = x ++ y ++ zero;
+  zero = 0;
+  res = x ++ y ++ zero;
 tel

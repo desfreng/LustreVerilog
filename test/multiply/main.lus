@@ -1,15 +1,15 @@
-node shift_left(x: r8) returns (res: r8);
+node shift_left(x: r<8>) returns (res: r<8>);
 let
     res = x[0:7] ++ false;
 tel
 
-node shift_right(x: r8) returns (res: r8);
+node shift_right(x: r<8>) returns (res: r<8>);
 let
     res = false ++ x[1:8];
 tel
 
-node multiply_pass(x, y, res: u8) returns (new_x, new_y, new_res: u8);
-var raw_x: r8;
+node multiply_pass(x, y, res: u<8>) returns (new_x, new_y, new_res: u<8>);
+var raw_x: r<8>;
 let
     raw_x = raw x;
     new_x = unsigned shift_right(raw x);
@@ -17,7 +17,7 @@ let
     new_res = res + (if raw_x[0] then y else 0);
 tel
 
-node multiply(x, y: u8) returns (res: u8);
+node multiply(x, y: u<8>) returns (res: u<8>);
 var x1, y1, r1,
     x2, y2, r2,
     x3, y3, r3,
@@ -26,7 +26,7 @@ var x1, y1, r1,
     x6, y6, r6,
     x7, y7, r7,
     x8, y8, r8,
-    x9, y9: u8;
+    x9, y9: u<8>;
 
 let
     (x1, y1, r1) = (0, 0, 0) fby (x, y, 0);
@@ -40,7 +40,7 @@ let
     (x9, y9, res) = (0, 0, 0) fby multiply_pass(x8, y8, r8);
 tel
 
-node main(x, y: u8) returns (res: u8);
+node main(x, y: u<8>) returns (res: u<8>);
 let
     res = multiply(x, y);
 tel

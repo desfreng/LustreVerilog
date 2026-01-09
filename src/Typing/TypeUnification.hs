@@ -30,7 +30,6 @@ module Typing.TypeUnification
     isStrictlySmaller,
     isSmaller,
     isEqual,
-    compareSize,
     checkSizeExpr,
     checkSizeInDecl,
     checkSizeConstraint,
@@ -42,7 +41,7 @@ where
 import Commons.Ast (Constant (..), NodeSignature, SizeConstraint)
 import Commons.Error (CanFail, embed, reportError)
 import Commons.Position (Pos)
-import Commons.Size (Size, constantSize)
+import Commons.Size (Size, constantSize, subSize)
 import Commons.Types (AtomicTType (..), BitVectorKind (..))
 import Control.Monad.Reader (Reader, ReaderT, runReader, runReaderT)
 import Control.Monad.State.Strict (MonadState (state), State, runState)
@@ -258,10 +257,7 @@ isSmaller :: Size -> Size -> TypeUnifier Bool
 isSmaller x y = TypeUnifier $ S.isSmaller x y
 
 isEqual :: Size -> Size -> TypeUnifier Bool
-isEqual x y = TypeUnifier $ (Just EQ ==) <$> S.compareSize x y
-
-compareSize :: Size -> Size -> TypeUnifier (Maybe Ordering)
-compareSize x y = TypeUnifier $ S.compareSize x y
+isEqual x y = TypeUnifier $ S.isZero (subSize x y)
 
 checkSizeConstraint :: SizeConstraint Size -> TypeUnifier Bool
 checkSizeConstraint = TypeUnifier . S.checkSizeConstraint

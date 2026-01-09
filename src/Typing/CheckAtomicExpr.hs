@@ -212,7 +212,7 @@ checkCall' loc args (nodeName, nodeSig) = do
           substType typ = case typ of
             TBool -> TBool
             TBitVector k s -> TBitVector k $ subst (sizeSol !) s
-          sizeExpr = (sizeSol !) <$> sizeVars nodeSig
+          sizeExpr = (sizeSol !) . fst <$> sizeVars nodeSig
           tArgsTyped = zip tArgs $ substType . snd <$> inputTypes nodeSig
           outputType = substType . snd <$> outputTypes nodeSig
        in do
@@ -231,19 +231,10 @@ checkCall' loc args (nodeName, nodeSig) = do
     checkConstraint :: SystemResult -> SizeConstraint Size -> ExprEnv (CanFail ())
     checkConstraint sizeSol cstr = do
       res <- unifToExpr $ checkSizeConstraint $ subst (sizeSol !) <$> cstr
-      let isInConstr v =
-            case cstr of
-              EqConstr x y -> hasVar x v || hasVar y v
-              GtConstr x y -> hasVar x v || hasVar y v
-              GeqConstr x y -> hasVar x v || hasVar y v
-              LtConstr x y -> hasVar x v || hasVar y v
-              LeqConstr x y -> hasVar x v || hasVar y v
-
-      let ctx = showResult isInConstr sizeSol
       return $
         if res
           then pure ()
-          else reportError loc $ printf "Unable to verify the constraint %s in the context: %s" (show cstr) ctx
+          else reportError loc $ printf "Unable to verify %s." (show $ subst (sizeSol !) <$> cstr)
 
     unifyArg :: Expr -> (VarIdent, AtomicTType) -> ExprEnv (CanFail AtomExprCand)
     unifyArg arg nodeArg = expectAtomicType (second buildArgConstr nodeArg) arg
@@ -293,7 +284,7 @@ checkCall' loc args (nodeName, nodeSig) = do
       sameNode <- isCurrentNode nodeName
       if sameNode
         then do
-          lexOrderOk <- checkLexOrder $ (\s -> (s, sizeSol ! s)) <$> sizeVars nodeSig
+          lexOrderOk <- checkLexOrder $ (\s -> (s, sizeSol ! s)) . fst <$> sizeVars nodeSig
           if not lexOrderOk
             then return $ reportError loc $ "This node instantiation is not stricly decreasing in size. We have " <> showResult (const True) sizeSol <> "."
             else return $ pure ()
@@ -302,11 +293,14 @@ checkCall' loc args (nodeName, nodeSig) = do
     checkLexOrder :: [(SizeIdent, Size)] -> ExprEnv Bool
     checkLexOrder [] = return False
     checkLexOrder ((x, y) : rest) = do
-      res <- unifToExpr $ compareSize (varSize x) y
-      case res of
-        Just GT -> return True
-        Just EQ -> checkLexOrder rest
-        _ -> return False
+      isLt <- unifToExpr $ y `isStrictlySmaller` varSize x
+      isEq <- unifToExpr $ y `isEqual` varSize x
+      if isLt
+        then return True
+        else
+          if isEq
+            then checkLexOrder rest
+            else return False
 
 typeAtomicAppExpr :: Pos a -> TypeConstraint -> Pos Ident -> [Expr] -> ExprEnv (CanFail AtomExprCand)
 typeAtomicAppExpr loc typ node args = checkCall loc node args >>= collapseA . fmap typeAtomicAppExpr'

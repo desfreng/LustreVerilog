@@ -84,8 +84,8 @@ data NodeSignature = NodeSignature
     inputTypes :: [(VarIdent, AtomicTType)],
     -- | Output Type of a Node
     outputTypes :: NonEmpty (VarIdent, AtomicTType),
-    -- | List of the Size Variables of a Node
-    sizeVars :: [SizeIdent],
+    -- | List of the Size Variables of a Node with their minimum value
+    sizeVars :: [(SizeIdent, RatioInt)],
     -- | List of the Size Constraints of a Node
     sizeConstraints :: [SizeConstraint Size]
   }

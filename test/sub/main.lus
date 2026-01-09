@@ -1,4 +1,4 @@
-node main(x, y: i8) returns (res: i8);
+node main(x, y: i<8>) returns (res: i<8>);
 let
     res = x - y;
 tel

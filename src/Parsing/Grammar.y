@@ -119,6 +119,7 @@ Maybe(p) :: { Maybe p }
 -- Entry Point
 File :: { PAst }
     : List(Node)                            {  PAst $ R.toList $1 }
+    |                                       {  PAst [] }
 
 Node :: { PNode }
     : node Ident
@@ -157,29 +158,15 @@ Decl :: { NonEmpty IdentDecl }
 
 BodyDecls :: { PBody }
     : NodeBody                              {  PSimpleBody $1 }
-    | when Criterion NodeBody
-      otherwise NodeBody                    {  PComposedBody $2 $3 (loc $4 ()) $5 }
+    | when Criterion ':' NodeBody
+      otherwise NodeBody                    {  PComposedBody $2 $4 (loc $5 ()) $6 }
 
 Criterion :: { Pos (Interval, SizeExpr) }
-    : TernCriterion                         {  $1 }
-    | BinCriterion                          {  $1 }
-
-TernCriterion :: { Pos (Interval, SizeExpr) }
-    : Integer '<' SizeExpr '<' Integer      {% mkTern $1 Ex (toInt $1) $3 Ex (toInt $5) $5 }
-    | Integer '<' SizeExpr '<=' Integer     {% mkTern $1 Ex (toInt $1) $3 In (toInt $5) $5 }
-    | Integer '<=' SizeExpr '<' Integer     {% mkTern $1 In (toInt $1) $3 Ex (toInt $5) $5 }
-    | Integer '<=' SizeExpr '<=' Integer    {% mkTern $1 In (toInt $1) $3 In (toInt $5) $5 }
-    | Integer '>' SizeExpr '>' Integer      {% mkTern $1 Ex (toInt $5) $3 Ex (toInt $1) $5 }
-    | Integer '>' SizeExpr '>=' Integer     {% mkTern $1 In (toInt $5) $3 Ex (toInt $1) $5 }
-    | Integer '>=' SizeExpr '>' Integer     {% mkTern $1 Ex (toInt $5) $3 In (toInt $1) $5 }
-    | Integer '>=' SizeExpr '>=' Integer    {% mkTern $1 In (toInt $5) $3 In (toInt $1) $5 }
-
-BinCriterion :: { Pos (Interval, SizeExpr) }
-    : SizeExpr '<' SizeExpr                 {  mkBinCrit $1 Lt $3 }
-    | SizeExpr '<=' SizeExpr                {  mkBinCrit $1 Leq $3 }
-    | SizeExpr '==' SizeExpr                {  mkBinCrit $1 Eq $3 }
-    | SizeExpr '>=' SizeExpr                {  mkBinCrit $1 Geq $3 }
-    | SizeExpr '>' SizeExpr                 {  mkBinCrit $1 Gt $3 }
+    : SizeExpr '<' SizeExpr                  {  mkBinCrit $1 Lt $3 }
+    | SizeExpr '<=' SizeExpr                 {  mkBinCrit $1 Leq $3 }
+    | SizeExpr '==' SizeExpr                 {  mkBinCrit $1 Eq $3 }
+    | SizeExpr '>=' SizeExpr                 {  mkBinCrit $1 Geq $3 }
+    | SizeExpr '>' SizeExpr                  {  mkBinCrit $1 Gt $3 }
 
 NodeBody :: { PNodeBody }
     : let List(Equation) tel                {  mkBody Nothing $2 }

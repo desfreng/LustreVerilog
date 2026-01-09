@@ -1,4 +1,4 @@
-node main(x, y: r8) returns (eq, neq: bool);
+node main(x, y: r<8>) returns (eq, neq: bool);
 let
     eq = x == y;
     neq = x <> y;

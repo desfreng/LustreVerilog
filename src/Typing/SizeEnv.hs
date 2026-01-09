@@ -6,19 +6,18 @@
 
 module Typing.SizeEnv
   ( SizeInfo (),
-    sizeName,
-    sizeConstr,
     buildNodeSizeEnv,
     checkSizeExpr,
     checkSizeInDecl,
-    compareSize,
     isSmaller,
+    isZero,
     isStrictlySmaller,
     checkSizeConstraint,
-    boundOf,
     SystemResult,
     solveSystem,
     restrictToInterval,
+    sizeInfoContraints,
+    sizeInfoVariables,
   )
 where
 
@@ -38,7 +37,7 @@ import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map (Map)
 import qualified Data.Map as M
 import qualified Data.Map as Map
-import Data.Maybe (catMaybes, fromMaybe)
+import Data.Maybe (catMaybes, fromMaybe, mapMaybe)
 import Data.Monoid (Ap (..))
 import Data.RatioInt (RatioInt, (%))
 import Data.Set (Set)
@@ -47,17 +46,29 @@ import Data.Vector.Strict (Vector)
 import qualified Data.Vector.Strict as V
 import Parsing.Ast (SizeDesc (..), SizeExpr)
 import Solver.BranchAndBound (solveMILP)
-import Solver.Data (OptimalResult (OptimalResult), Result (..), VarType (..))
+import Solver.Data (OptimalResult (OptimalResult), Result (..), VarTag (..), VarType (..), VariableResult (..))
 import Solver.Gauss (Solution (..), buildSystem, solve)
 import Solver.Interface
 import Solver.Matrix (fromRowList)
 import Text.Printf (printf)
 
 data SizeInfo = SizeInfo
+  { sizeCtx :: SizeContext,
+    varDefaultValue :: Map SizeIdent RatioInt
+  }
+  deriving (Show)
+
+data SizeContext = SizeContext
   { sizeSet :: Set SizeIdent,
-    sizeName :: [SizeIdent],
     sizeConstr :: [SizeConstraint Size]
   }
+  deriving (Show)
+
+sizeInfoContraints :: SizeInfo -> [SizeConstraint Size]
+sizeInfoContraints SizeInfo {sizeCtx = SizeContext {sizeConstr}} = sizeConstr
+
+sizeInfoVariables :: SizeInfo -> Map SizeIdent RatioInt
+sizeInfoVariables SizeInfo {varDefaultValue} = varDefaultValue
 
 exprToSizeEq :: Set SizeIdent -> SizeExpr -> CanFail Size
 exprToSizeEq validVars loc = go $ unwrap loc
@@ -81,8 +92,8 @@ exprToSizeEq validVars loc = go $ unwrap loc
     go (SubSize e1 e2) =
       subSize <$> exprToSizeEq validVars e1 <*> exprToSizeEq validVars e2
 
-solvePB :: SizeInfo -> ObjectiveType -> Size -> Result
-solvePB SizeInfo {sizeSet, sizeConstr} objType obj =
+solvePB :: SizeContext -> ObjectiveType -> Size -> Result SizeIdent
+solvePB SizeContext {sizeSet, sizeConstr} objType obj =
   let pb = buildProblem $ do
         vMap <- foldM genVar mempty sizeSet
         () <- mapM_ (suchThat . toILPConstr vMap) sizeConstr
@@ -90,16 +101,13 @@ solvePB SizeInfo {sizeSet, sizeConstr} objType obj =
    in solveMILP pb
   where
     genVar m v = do
-      vId <- namedVar IntegerVar $ show v
+      vId <- namedVar IntegerVar v
       return $ Map.insert v vId m
 
     toILP :: Map SizeIdent Var -> Size -> ILPExpr
     toILP vMap s =
       let (coefs, cst) = splitSize s
-       in cst
-            +. Map.foldMapWithKey
-              (\v coef -> coef *. fromMaybe (error $ printf "Here ? %s and %s" (show $ Map.keys vMap) (show v)) (vMap Map.!? v))
-              (getCoeffs coefs)
+       in cst +. Map.foldMapWithKey (\v coef -> coef *. vMap Map.! v) (getCoeffs coefs)
 
     toILPConstr :: Map SizeIdent Var -> SizeConstraint Size -> Constraint
     toILPConstr vMap (EqConstr x y) = (toILP vMap x -. toILP vMap y) ==. 0
@@ -108,26 +116,27 @@ solvePB SizeInfo {sizeSet, sizeConstr} objType obj =
     toILPConstr vMap (LtConstr x y) = toILPConstr vMap (ltToLeq x y)
     toILPConstr vMap (GtConstr x y) = toILPConstr vMap (gtToGeq x y)
 
-data PositivityResult = Unconclusive | Null | Positive
+data PositivityResult = Negative | Null | Positive
 
-checkPositive :: SizeInfo -> Size -> PositivityResult
-checkPositive sInfo obj =
-  case solvePB sInfo Minimize obj of
+isAlwaysPositive :: (MonadReader SizeInfo m) => Size -> m PositivityResult
+isAlwaysPositive obj = reader $ \SizeInfo {sizeCtx} ->
+  case solvePB sizeCtx Minimize obj of
     Infeasible -> error "This problem should be feasible."
-    Unbounded -> Unconclusive
+    Unbounded -> Negative
     Optimal (OptimalResult _ res) ->
       case compare res 0 of
         EQ -> Null
         GT -> Positive
-        LT -> Unconclusive
+        LT -> Negative
 
 buildNodeSizeEnv :: Pos a -> [Pos SizeIdent] -> [SizeConstraint SizeExpr] -> CanFail SizeInfo
 buildNodeSizeEnv nodeLoc vList vConstr = do
   validSet <- foldM checkDuplicate Set.empty vList
   validConstrs <- mapM (convertConstraint validSet) vConstr
-  let sInfo = SizeInfo validSet (unwrap <$> vList) validConstrs
-  () <- checkFeasible $ solvePB sInfo Maximize $ constantSize 0
-  return sInfo
+  let sCtx = SizeContext validSet validConstrs
+  let varSum = foldMap varSize validSet
+  defaultSizeVal <- checkFeasible $ solvePB sCtx Minimize varSum
+  return $ SizeInfo sCtx defaultSizeVal
   where
     checkDuplicate :: Set SizeIdent -> Pos SizeIdent -> CanFail (Set SizeIdent)
     checkDuplicate seen loc =
@@ -144,17 +153,23 @@ buildNodeSizeEnv nodeLoc vList vConstr = do
       LtConstr e1 e2 -> LtConstr <$> exprToSizeEq s e1 <*> exprToSizeEq s e2
       GtConstr e1 e2 -> GtConstr <$> exprToSizeEq s e1 <*> exprToSizeEq s e2
 
-    checkFeasible :: Result -> CanFail ()
-    checkFeasible Infeasible = reportError nodeLoc "The size constraints for this node are not feasible. They represent the empty set."
-    checkFeasible (Optimal _) = pure ()
-    checkFeasible Unbounded = error "This problem should be Bounded."
+    checkFeasible :: (Ord a) => Result a -> CanFail (Map a RatioInt)
+    checkFeasible Infeasible =
+      reportError nodeLoc "The size constraints for this node are not feasible. They represent the empty set."
+    checkFeasible (Optimal (OptimalResult vRes _)) =
+      pure $ Map.fromList (mapMaybe extractSizeValue vRes)
+    checkFeasible Unbounded =
+      error "This problem should be Bounded."
+
+extractSizeValue :: VariableResult a -> Maybe (a, RatioInt)
+extractSizeValue VariableResult {resTag = Tagged x, resVal} = Just (x, resVal)
+extractSizeValue _ = Nothing
 
 restrictToInterval :: SizeInfo -> SimpleSize -> Interval -> Maybe SizeInfo
-restrictToInterval sInfo s i =
-  let newConstr = go i ++ sizeConstr sInfo
-      newSInfo = sInfo {sizeConstr = newConstr}
-   in case solvePB newSInfo Maximize $ constantSize 0 of
-        Optimal _ -> Just newSInfo
+restrictToInterval sInfo@SizeInfo {sizeCtx} s i =
+  let newCtx = sizeCtx {sizeConstr = go i ++ sizeConstr sizeCtx}
+   in case solvePB newCtx Maximize $ constantSize 0 of
+        Optimal _ -> Just sInfo {sizeCtx = newCtx}
         Unbounded -> error "This problem should be bounded"
         Infeasible -> Nothing
   where
@@ -166,7 +181,7 @@ restrictToInterval sInfo s i =
     go (Between lo hi) = go (MajoredBy hi) ++ go (MinoredBy lo)
 
 checkSizeExpr :: (MonadReader SizeInfo m) => SizeExpr -> m (CanFail Size)
-checkSizeExpr e = reader $ \sInfo -> exprToSizeEq (sizeSet sInfo) e
+checkSizeExpr e = reader $ \SizeInfo {sizeCtx} -> exprToSizeEq (sizeSet sizeCtx) e
 
 checkSizeInDecl :: (MonadReader SizeInfo m) => SizeExpr -> m (CanFail Size)
 checkSizeInDecl e = do
@@ -181,52 +196,26 @@ checkSizeInDecl e = do
           then pure sEq
           else reportError e "This size expression is not always greater or equal to 1."
 
-compareSize :: (MonadReader SizeInfo m) => Size -> Size -> m (Maybe Ordering)
-compareSize x y = reader $ \sInfo ->
-  let ge = checkPositive sInfo (subSize x y) -- Check if x - y >= 0 <=> x >= y
-      le = checkPositive sInfo (subSize y x) -- Check if y - x >= 0 <=> y >= x
-   in case (ge, le) of
-        -- Both are non-negative: x >= y AND y >= x implies x == y
-        (Null, Null) -> Just EQ
-        -- One holds, the other fails: Strict inequality
-        (Positive, Unconclusive) -> Just GT
-        (Null, Unconclusive) -> Just GT
-        (Unconclusive, Positive) -> Just LT
-        (Unconclusive, Null) -> Just LT
-        -- Neither holds: The expressions are incomparable
-        (Unconclusive, Unconclusive) -> Nothing
-        -- Impossible states (Assuming a consistent system)
-        (Null, Positive) -> showError sInfo "==" ">"
-        (Positive, Null) -> showError sInfo ">" "=="
-        (Positive, Positive) -> showError sInfo ">" ">"
-  where
-    showError :: SizeInfo -> String -> String -> a
-    showError sInfo rel1 rel2 =
-      let xRepr = show x
-          yRepr = show y
-          ctx = intercalate ", " $ show <$> sizeConstr sInfo
-       in error $ printf "We have proved %s %s %s and %s %s %s in %s." xRepr rel1 yRepr yRepr rel2 xRepr ctx
-
 -- | x `isStrictlySmaller` y checks that x < y
 isStrictlySmaller :: (MonadReader SizeInfo m) => Size -> Size -> m Bool
-isStrictlySmaller x y = (Just LT ==) <$> compareSize x y
+isStrictlySmaller x y = do
+  res <- isAlwaysPositive (subSize y x)
+  return $ case res of
+    Negative -> False
+    Null -> False
+    Positive -> True
 
 -- | x `isSmaller` y checks that x <= y
 isSmaller :: (MonadReader SizeInfo m) => Size -> Size -> m Bool
-isSmaller x y = (\c -> Just LT == c || Just EQ == c) <$> compareSize x y
+isSmaller x y = do
+  res <- isAlwaysPositive (subSize y x)
+  return $ case res of
+    Negative -> False
+    Null -> True
+    Positive -> True
 
 isZero :: (MonadReader SizeInfo m) => Size -> m Bool
-isZero x = (Just EQ ==) <$> compareSize x (constantSize 0)
-
-boundOf :: SizeInfo -> Size -> (Maybe RatioInt, Maybe RatioInt)
-boundOf sInfo s =
-  let minS = extract $ solvePB sInfo Minimize s
-      maxS = extract $ solvePB sInfo Maximize s
-   in (minS, maxS)
-  where
-    extract Infeasible = error "This problem should be feasible."
-    extract Unbounded = Nothing
-    extract (Optimal (OptimalResult _ res)) = Just res
+isZero x = (&&) <$> x `isSmaller` mempty <*> mempty `isSmaller` x
 
 checkSizeConstraint :: (MonadReader SizeInfo m) => SizeConstraint Size -> m Bool
 checkSizeConstraint (EqConstr lhs rhs) = (&&) <$> rhs `isSmaller` lhs <*> lhs `isSmaller` rhs
@@ -259,13 +248,13 @@ solveSystem loc nSigs constr =
                  in reportError loc msg
         CheckThat res vMap -> do
           b <- foldMapM checkIsNull res
-          return $ case catMaybes b of
-            [] -> pure $ convert vMap
-            (i, x) : _ ->
-              let msg = printf "The type equation from this argument lead to %s = 0 which we cannot assert." $ show x
-               in reportError (constr !! i) msg
+          case catMaybes b of
+            [] -> return . pure $ convert vMap
+            (i, x) : _ -> do
+              msg <- buildError x
+              return $ reportError (constr !! i) msg
   where
-    varsList = sizeVars nSigs
+    varsList = fst <$> sizeVars nSigs
     nbVars = length varsList
 
     go :: (Size, Size) -> (Vector RatioInt, Size)
@@ -283,3 +272,8 @@ solveSystem loc nSigs constr =
     checkIsNull (i, x) = do
       b <- isZero x
       return $ if b then [Nothing] else [Just (i, x)]
+
+    buildError :: (MonadReader SizeInfo m) => Size -> m String
+    buildError x = reader $ \SizeInfo {sizeCtx} ->
+      let showCtx = intercalate ", " $ show <$> sizeConstr sizeCtx
+       in printf "The type equation from this argument lead to %s = 0 which we cannot assert from %s." (show x) showCtx

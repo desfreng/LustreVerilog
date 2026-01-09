@@ -3,7 +3,7 @@
 
 module Typing.NodeVarEnv
   ( -- NodeVarEnv
-    VarMapping,
+    VarMapping (..),
     NodeVarEnv (),
     addInputVariable,
     addOutputVariable,
@@ -27,9 +27,13 @@ import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Parsing.Ast (SizeExpr)
-import Typing.SizeEnv (SizeInfo (..), checkSizeInDecl)
+import Typing.SizeEnv (SizeInfo, checkSizeInDecl, sizeInfoContraints, sizeInfoVariables)
 
-type VarMapping = Map VarIdent AtomicTType
+data VarMapping
+  = VarMapping
+  { topLevelVars :: Map VarIdent AtomicTType,
+    localVars :: Map VarIdent AtomicTType
+  }
 
 data VarKind = Input | Output | Local
   deriving (Eq)
@@ -85,14 +89,17 @@ runNodeVarEnv (NodeVarEnv m) sInfo =
               { nodeArity = length inL,
                 inputTypes = update <$> inL,
                 outputTypes = NonEmpty.fromList $ update <$> outL,
-                sizeVars = sizeName sInfo,
-                sizeConstraints = sizeConstr sInfo
+                sizeVars = Map.toList $ sizeInfoVariables sInfo,
+                sizeConstraints = sizeInfoContraints sInfo
               },
-            vM
+            VarMapping vM mempty
           )
 
 addLocals :: SizeInfo -> VarMapping -> NodeVarEnv () -> CanFail VarMapping
-addLocals sInfo vMap (NodeVarEnv m) =
-  let initState = NodeVarState {varList = pure [], varMap = fmap pure vMap}
+addLocals sInfo VarMapping {topLevelVars} (NodeVarEnv m) =
+  let initState = NodeVarState {varList = pure [], varMap = fmap pure topLevelVars}
       NodeVarState {varMap} = execState (runReaderT m sInfo) initState
-   in sequenceA varMap
+   in do
+        allVars <- sequenceA varMap
+        let localVars = Map.difference allVars topLevelVars
+        return $ VarMapping {topLevelVars, localVars}

@@ -10,6 +10,7 @@ import LustreVerilog
 import Options.Applicative
 import Paths_LustreVerilog (getDataDir)
 import System.Exit (ExitCode (..), exitWith)
+import System.FilePath (normalise)
 import Text.Pretty.Simple (pPrint)
 import Text.Printf (printf)
 import Prelude hiding (writeFile)
@@ -96,7 +97,7 @@ runCompiler opts =
             CompileStage mainModule -> compileInput opts mainModule cast
 
 printStdLib :: IO ()
-printStdLib = getDataDir >>= putStrLn
+printStdLib = getDataDir >>= putStrLn . normalise
 
 exitWithError :: Int -> String -> IO a
 exitWithError code err = putStrLn err >> exitWith (ExitFailure code)

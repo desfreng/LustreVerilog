@@ -19,12 +19,12 @@ data VarType = IntegerVar | RealVar
 
 data ObjectiveType = Maximize | Minimize
 
-data VarTag = NoTag | SlackVar | Tagged !String
+data VarTag a = NoTag | SlackVar | Tagged a
 
-data Problem = Problem
+data Problem a = Problem
   { nbVars :: Int,
     objectiveType :: ObjectiveType,
-    varTags :: Map VarID VarTag,
+    varTags :: Map VarID (VarTag a),
     objective :: (Map VarID RatioInt, RatioInt),
     constraints :: [(Map VarID RatioInt, RatioInt)],
     intVars :: Set VarID
@@ -41,29 +41,29 @@ data SimplexData = SimplexData
     origObj :: !(Vector RatioInt)
   }
 
-data VariableResult = VariableResult
+data VariableResult a = VariableResult
   { resIndex :: VarID,
-    resTag :: VarTag,
+    resTag :: VarTag a,
     resVal :: RatioInt,
     resType :: VarType
   }
 
-data OptimalResult = OptimalResult
-  { variablesValues :: [VariableResult],
+data OptimalResult a = OptimalResult
+  { variablesValues :: [VariableResult a],
     optimalCost :: !RatioInt
   }
 
-data Result
+data Result a
   = Infeasible
   | Unbounded
-  | Optimal !OptimalResult
+  | Optimal !(OptimalResult a)
 
-showTag :: VarID -> VarTag -> String
+showTag :: (Show a) => VarID -> VarTag a -> String
 showTag (VarID idx) NoTag = "_" <> show idx
 showTag (VarID idx) SlackVar = "_slack" <> show idx
-showTag _ (Tagged x) = x
+showTag _ (Tagged x) = show x
 
-formatPoly :: Map VarID VarTag -> Map VarID RatioInt -> String
+formatPoly :: (Show a) => Map VarID (VarTag a) -> Map VarID RatioInt -> String
 formatPoly vInfo l =
   let newL = map ppMult $ M.assocs l
    in case newL of
@@ -78,13 +78,13 @@ formatPoly vInfo l =
 
     ppVar vCol = showTag vCol $ vInfo M.! vCol
 
-formatConstraint :: Map VarID VarTag -> (Map VarID RatioInt, RatioInt) -> String
+formatConstraint :: (Show a) => Map VarID (VarTag a) -> (Map VarID RatioInt, RatioInt) -> String
 formatConstraint vInfo (coeffs, rhs) =
   let polyStr = formatPoly vInfo coeffs
    in "    " <> polyStr <> " = " <> showRatio rhs
 
-instance Show Problem where
-  show :: Problem -> String
+instance (Show a) => Show (Problem a) where
+  show :: Problem a -> String
   show Problem {objectiveType, varTags, objective, constraints, intVars} =
     let objTypeStr = case objectiveType of
           Minimize -> "min"
@@ -137,13 +137,13 @@ instance Show Problem where
 --   show :: SimplexTableau -> String
 --   show = showTableau
 
-instance Show VariableResult where
-  show :: VariableResult -> String
+instance (Show a) => Show (VariableResult a) where
+  show :: VariableResult a -> String
   show VariableResult {resTag, resIndex, resVal} =
     showTag resIndex resTag <> " = " <> showRatio resVal
 
-instance Show Result where
-  show :: Result -> String
+instance (Show a) => Show (Result a) where
+  show :: Result a -> String
   show Infeasible = "Infeasible"
   show Unbounded = "Unbounded"
   show (Optimal res) =

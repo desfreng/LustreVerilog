@@ -13,9 +13,8 @@ import Control.Monad.State (MonadState (state), State, evalState)
 import Data.Foldable (Foldable (toList))
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
-import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
+import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Text (Text)
-import Debug.Trace (traceShow, traceShowId)
 import Prettyprinter
 import Prettyprinter.Render.Text (renderStrict)
 import Text.Printf (printf)
@@ -51,8 +50,8 @@ runOutput sig (Output m) = evalState (runReaderT m sig) 0
 findNode :: Text -> ModuleEnv -> Maybe NodeIdent
 findNode nodeName env =
   let n = NodeIdent . Ident $ nodeName
-      vName = traceShowId $ verilogName n
-      nodeList = traceShowId $ mapMaybe go (Map.keys env)
+      vName = verilogName n
+      nodeList = mapMaybe go (Map.keys env)
    in if vName `elem` nodeList then Just n else Nothing
   where
     go :: ModuleName -> Maybe NodeIdent
@@ -84,7 +83,7 @@ toVerilogCode reset mainName (Ast sig modules imports) =
        in renderStrict $ layoutPretty layoutOptions doc
 
 ppImportDecl :: ModuleImport -> Doc ann
-ppImportDecl file = "`include" <+> angles (pretty file)
+ppImportDecl file = "`include" <+> dquotes (pretty file)
 
 buildMainModule :: ResetKind -> NodeIdent -> Output (Doc ann)
 buildMainModule reset mainName =
@@ -107,7 +106,7 @@ buildMainModule reset mainName =
         let mainInst =
               ModuleInst
                 { name = moduleName m,
-                  sizeArgs = varSize <$> moduleSize m,
+                  sizeArgs = varSize . getSizeVarName <$> moduleSize m,
                   controlArgs = (\(_, x, _) -> x) <$> mControl,
                   inArgs = Right . getVarName <$> inputVars m,
                   outArgs = getVarName <$> outputVars m
@@ -144,8 +143,9 @@ ppVarDecl kind decl =
         OutputVar -> "output" <+> vDef
         InternalVar -> vDef
 
-ppStaticDecl :: SizeIdent -> Doc ann
-ppStaticDecl name = "parameter" <+> pretty name
+ppStaticDecl :: SizeDecl -> Doc ann
+ppStaticDecl (SizeDecl name defaultValue) =
+  "parameter" <+> pretty name <+> "=" <+> prettyRatio defaultValue
 
 moduleToVerilog :: Module -> Output (Doc ann)
 moduleToVerilog Module {moduleHead, moduleBody} = do
@@ -245,8 +245,8 @@ moduleInst m ModuleInst {name, sizeArgs, controlArgs, inArgs, outArgs} =
             <> indent 4 (vsep callArgs)
             <> (hardline <> ")")
   where
-    ppStaticArg :: SizeIdent -> Size -> Doc ann
-    ppStaticArg (SizeIdent n) eq = ppArg n $ pretty eq
+    ppStaticArg :: SizeDecl -> Size -> Doc ann
+    ppStaticArg (SizeDecl (SizeIdent n) _) eq = ppArg n $ pretty eq
 
     ppControlArgs :: Maybe (ModuleControl VarDecl) -> Maybe (ModuleControl Ident) -> [Doc ann]
     ppControlArgs Nothing _ = []

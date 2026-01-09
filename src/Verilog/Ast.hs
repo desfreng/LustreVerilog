@@ -10,6 +10,7 @@ import Commons.Size (Size, constantSize, isNull, subSize)
 import Compiling.Ast (CBinOp, CUnOp)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Map (Map)
+import Data.RatioInt (RatioInt)
 import Prettyprinter (Doc, Pretty (pretty), unsafeViaShow, (<+>))
 
 data Constant = Constant
@@ -60,9 +61,15 @@ data Expr
 data VarDecl = WireDecl Size Ident
   deriving (Show)
 
+data SizeDecl = SizeDecl SizeIdent RatioInt
+  deriving (Show)
+
+getSizeVarName :: SizeDecl -> SizeIdent
+getSizeVarName (SizeDecl n _) = n
+
 data ModuleHead = ModuleHead
   { moduleName :: ModuleName,
-    moduleSize :: [SizeIdent],
+    moduleSize :: [SizeDecl],
     controlVars :: Maybe (ModuleControl VarDecl),
     inputVars :: [VarDecl],
     outputVars :: NonEmpty VarDecl

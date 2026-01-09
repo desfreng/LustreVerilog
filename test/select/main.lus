@@ -1,4 +1,4 @@
-node main(x: r8) returns (res: bool);
+node main(x: r<8>) returns (res: bool);
 let
     res = x[2];
 tel

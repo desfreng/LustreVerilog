@@ -1,6 +1,6 @@
-node main(x, y: i<N - M - 1>) returns (res: i<N - M - 1>);
-  size N, M
-  where N - M >= 1
+node main(x, y: i<N>) returns (res: i<N>);
+  size N;
+  where N >= 1;
 let
-    res = x + y;
+  res = x + y;
 tel

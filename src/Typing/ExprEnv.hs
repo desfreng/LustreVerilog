@@ -31,7 +31,7 @@ import Data.Map.Lazy (Map, (!))
 import Data.Text (unpack)
 import Typing.Ast (TEquation (..), TExpr (ConstantTExpr, VarTExpr))
 import Typing.NodeEnv (NodeEnv, NodeMapping, toNodeEnv)
-import Typing.NodeVarEnv (VarMapping)
+import Typing.NodeVarEnv (VarMapping (..))
 import qualified Typing.SizeEnv as S
 import Typing.TypeUnification (TypeCand, TypeUnifier, runUnifier)
 
@@ -54,12 +54,18 @@ findVariable :: Pos Ident -> ExprEnv (CanFail (VarIdent, AtomicTType))
 findVariable varName = ExprEnv $ asks (findVariable' . \(_, _, x) -> x)
   where
     varId = VarIdent varName
-    findVariable' vs =
-      case Map.lookup varId vs of
-        Just sig -> pure (varId, sig)
-        Nothing ->
-          let Ident s = unwrap varName
-           in reportError varName $ "Unknown variable " <> unpack s <> "."
+
+    findVariable' :: VarMapping -> CanFail (VarIdent, AtomicTType)
+    findVariable' VarMapping {topLevelVars, localVars} =
+      let topLookup = Map.lookup varId topLevelVars
+          localLookup = Map.lookup varId localVars
+       in case (topLookup, localLookup) of
+            (Just sig, Nothing) -> pure (varId, sig)
+            (Nothing, Just sig) -> pure (varId, sig)
+            (Nothing, Nothing) ->
+              let Ident s = unwrap varName
+               in reportError varName $ "Unknown variable " <> unpack s <> "."
+            (Just _, Just _) -> error "Found duplicated variable definition"
 
 isCurrentNode :: NodeIdent -> ExprEnv Bool
 isCurrentNode nId = ExprEnv $ asks $ \(n, _, _) -> n == nId
@@ -123,18 +129,18 @@ buildCallEq nodeId sizeVarsArgs args outTypes = do
       return $ Right newVar
 
 runExprEnv :: ExprEnv (CanFail (NonEmpty TCandEq)) -> NodeIdent -> VarMapping -> S.SizeInfo -> NodeEnv (CanFail (Map VarId AtomicTType, NonEmpty (TEquation AtomicTType)))
-runExprEnv m nId vMapping sInfo = toNodeEnv $ runExprEnv' m nId vMapping sInfo
+runExprEnv m nId vMaps sInfo = toNodeEnv $ runExprEnv' m nId vMaps sInfo
 
 runExprEnv' :: ExprEnv (CanFail (NonEmpty TCandEq)) -> NodeIdent -> VarMapping -> S.SizeInfo -> NodeMapping -> CanFail (Map VarId AtomicTType, NonEmpty (TEquation AtomicTType))
-runExprEnv' (ExprEnv m) nId vMapping sInfo ns =
-  let m' = runReaderT m (nId, ns, vMapping)
+runExprEnv' (ExprEnv m) nId vMaps sInfo ns =
+  let m' = runReaderT m (nId, ns, vMaps)
       m'' = runStateT m' (ExprState {sideEqs = [], varsInfo = Map.empty, nextVarId = 0})
       ((tEqsF, s), typeSF) = runUnifier sInfo m''
    in do
         (tEqs, typeS) <- (,) <$> tEqsF <*> typeSF
         let sEq = fmap (typeS !) <$> NonEmpty.appendList tEqs (sideEqs s)
-        let locEnv = Map.foldMapWithKey (fromFreshVars typeS) (varsInfo s)
-        return (locEnv, sEq)
+        let newEnv = Map.mapKeysMonotonic FromIdent (localVars vMaps) <> Map.foldMapWithKey (fromFreshVars typeS) (varsInfo s)
+        return (newEnv, sEq)
   where
     fromFreshVars :: Map TypeCand AtomicTType -> VarId -> VarInfo -> Map VarId AtomicTType
     fromFreshVars _ vId (WithType aTyp) = Map.singleton vId aTyp

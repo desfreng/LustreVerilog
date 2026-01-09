@@ -1,4 +1,6 @@
-node main(x, y: r8) returns (res: r8);
+node main(x, y: r<N>) returns (res: r<N>);
+  size N;
+  where N > 0;
 let
     res = x and y;
 tel

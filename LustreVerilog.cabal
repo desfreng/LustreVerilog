@@ -108,6 +108,7 @@ executable LustreVerilog
         text,
         optparse-applicative,
         pretty-simple,
+        filepath,
         LustreVerilog
 
     hs-source-dirs:   app

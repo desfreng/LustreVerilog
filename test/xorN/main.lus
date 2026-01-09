@@ -1,0 +1,17 @@
+node xor (x, y: r<1>) returns (out: r<1>)
+  let
+    out = (x or y) and not (x and y);
+  tel
+
+node main(x, y: r<N>) returns (out: r<N>)
+  size N;
+  where
+    N >= 1;
+  when N <= 1:
+    let
+      out = xor (x, y);
+    tel
+  otherwise
+    let
+      out = xor(x[0:1], y[0:1]) ++ main(x[1:N], y[1:N]);
+    tel

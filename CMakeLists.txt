@@ -18,6 +18,12 @@ set(VERILATOR_ARGS --x-assign unique --relative-includes --x-initial unique --ti
 
 # Retrieve Include Directory
 execute_process(
+    COMMAND cabal build exe:LustreVerilog
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    COMMAND_ERROR_IS_FATAL ANY
+)
+
+execute_process(
     COMMAND cabal run LustreVerilog -- --stdlib-dir
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     OUTPUT_VARIABLE VERILATOR_INCLUDE
@@ -25,10 +31,14 @@ execute_process(
     COMMAND_ERROR_IS_FATAL ANY
 )
 
+message("We have ${VERILATOR_INCLUDE}")
+
 function(lustre_test TEST_NAME)
     set(oneValueArgs LUSTRE TOP)
-    cmake_parse_arguments(PARSE_ARGV 0 arg "" "${oneValueArgs}" "")
+    set(multiValueArgs VERILATOR_ARGS) 
 
+    cmake_parse_arguments(PARSE_ARGV 0 arg "" "${oneValueArgs}" "${multiValueArgs}")
+    
     if(NOT arg_LUSTRE)
         set(arg_LUSTRE "main.lus")
     endif()
@@ -65,7 +75,7 @@ function(lustre_test TEST_NAME)
         TOP_MODULE main
         INCLUDE_DIRS ${VERILATOR_INCLUDE}
         VERILATOR_ARGS ${VERILATOR_ARGS}
-        TRACE
+        TRACE_VCD
     )
 
     target_compile_definitions(${TEST_NAME} PUBLIC WAVEFORM_FILE="${OUT_WAVEFORM}")
@@ -115,7 +125,7 @@ function(verilog_test TEST_NAME)
         TOP_MODULE main
         INCLUDE_DIRS ${VERILATOR_INCLUDE}
         VERILATOR_ARGS ${VERILATOR_ARGS}
-        TRACE
+        TRACE_VCD
     )
 
     target_compile_definitions(${TEST_NAME} PUBLIC WAVEFORM_FILE="${OUT_WAVEFORM}")
@@ -147,6 +157,8 @@ lustre_test(slice)
 lustre_test(slides-ex3)
 lustre_test(sub)
 lustre_test(ucmp)
+lustre_test(fulladder)
+lustre_test(xorN VERILATOR_ARGS "-GN=4")
 
 verilog_test(verilog-playground)
 verilog_test(slides-ex1)

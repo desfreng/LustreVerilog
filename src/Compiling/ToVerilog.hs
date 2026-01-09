@@ -68,7 +68,7 @@ nodeToVerilog moduleName (Node nSig nBody) =
   let moduleHead =
         ModuleHead
           { moduleName = Custom moduleName,
-            moduleSize = Ast.sizeVars nSig,
+            moduleSize = uncurry SizeDecl <$> Ast.sizeVars nSig,
             controlVars = Just ctrlDecl,
             inputVars = topDecl <$> Ast.inputTypes nSig,
             outputVars = topDecl <$> Ast.outputTypes nSig

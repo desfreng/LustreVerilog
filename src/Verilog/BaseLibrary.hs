@@ -55,7 +55,7 @@ buildUnOpModules op = (mHead, show (UnOpModule op) <> baseSuffix)
     mHead =
       ModuleHead
         { moduleName = Base $ UnOpModule op,
-          moduleSize = [size],
+          moduleSize = [SizeDecl size 1],
           controlVars = Nothing,
           inputVars = [WireDecl (varSize size) $ Ident "arg"],
           outputVars = NonEmpty.singleton $ WireDecl (varSize size) $ Ident "res"
@@ -70,7 +70,7 @@ buildBinOpModule op outSize = (mHead, show (BinOpModule op) <> baseSuffix)
     mHead =
       ModuleHead
         { moduleName = Base $ BinOpModule op,
-          moduleSize = [binOpInSize],
+          moduleSize = [SizeDecl binOpInSize 1],
           controlVars = Nothing,
           inputVars =
             [ WireDecl (varSize binOpInSize) $ Ident "lhs",
@@ -98,7 +98,7 @@ fbyModule = (mHead, show FbyModule <> baseSuffix)
     mHead =
       ModuleHead
         { moduleName = Base FbyModule,
-          moduleSize = [size],
+          moduleSize = [SizeDecl size 1],
           controlVars =
             Just
               ModuleControl
@@ -120,7 +120,7 @@ ifModule = (mHead, show IfModule <> baseSuffix)
     mHead =
       ModuleHead
         { moduleName = Base IfModule,
-          moduleSize = [size],
+          moduleSize = [SizeDecl size 1],
           controlVars = Nothing,
           inputVars =
             [ WireDecl (constantSize 1) $ Ident "cond",
@@ -139,7 +139,7 @@ concatModule = (mHead, show ConcatModule <> baseSuffix)
     mHead =
       ModuleHead
         { moduleName = Base ConcatModule,
-          moduleSize = [lhsSize, rhsSize],
+          moduleSize = [SizeDecl lhsSize 1, SizeDecl rhsSize 1],
           controlVars = Nothing,
           inputVars =
             [ WireDecl (varSize lhsSize) $ Ident "lhs",
@@ -158,7 +158,7 @@ sliceModule = (mHead, show SliceModule <> baseSuffix)
     mHead =
       ModuleHead
         { moduleName = Base SliceModule,
-          moduleSize = [size, fstIndex, sndIndex],
+          moduleSize = [SizeDecl size 1, SizeDecl fstIndex 0, SizeDecl sndIndex 1],
           controlVars = Nothing,
           inputVars = [WireDecl (varSize size) $ Ident "arg"],
           outputVars = NonEmpty.singleton $ WireDecl (subVar fstIndex sndIndex) $ Ident "res"
@@ -173,7 +173,7 @@ selectModule = (mHead, show SelectModule <> baseSuffix)
     mHead =
       ModuleHead
         { moduleName = Base SelectModule,
-          moduleSize = [size, arg],
+          moduleSize = [SizeDecl size 1, SizeDecl arg 0],
           controlVars = Nothing,
           inputVars = [WireDecl (varSize size) $ Ident "arg"],
           outputVars = NonEmpty.singleton $ WireDecl (constantSize 1) $ Ident "res"

@@ -7,7 +7,6 @@ import Commons.Position (Pos, extendLeft, extendRight, fromLoc, merge, unwrap)
 import Commons.Tree (Tree (..))
 import Commons.Types (BitVectorKind (Signed))
 import Data.List.NonEmpty (NonEmpty (..), toList)
-import Data.RatioInt (RatioInt, (%))
 import Parsing.Ast
 import Parsing.Commons (Token (..))
 import Parsing.ParsingMonad (ParsingMonad, defaultIntSize, readParam)
@@ -107,22 +106,16 @@ data CritOp = Lt | Leq | Eq | Geq | Gt
 
 mkBinCrit :: SizeExpr -> CritOp -> SizeExpr -> Pos (Interval, SizeExpr)
 mkBinCrit beg op end =
-  let int lhs rhs =
-        let v = merge SubSize rhs lhs
+  let int l r =
+        let v = merge SubSize r l
             i = case op of
-              Lt -> MajoredBy (Ex 0)
-              Leq -> MajoredBy (In 0)
+              Lt -> MinoredBy (Ex 0)
+              Leq -> MinoredBy (In 0)
               Eq -> Between (In 0) (In 0)
-              Geq -> MinoredBy (In 0)
-              Gt -> MinoredBy (Ex 0)
+              Geq -> MajoredBy (In 0)
+              Gt -> MajoredBy (Ex 0)
          in (i, v)
    in merge int beg end
-
-mkTern :: Token -> (RatioInt -> Bound RatioInt) -> ParsingMonad Int -> b -> (RatioInt -> Bound RatioInt) -> ParsingMonad Int -> Token -> ParsingMonad (Pos (Interval, b))
-mkTern beg fLo lo crit fHi hi end = do
-  rLo <- fLo . (% 1) <$> lo
-  rHi <- fHi . (% 1) <$> hi
-  return $ locBetween beg (Between rLo rHi, crit) end
 
 {-# INLINE mkNode #-}
 mkNode :: Pos Ident -> [IdentDecl] -> NonEmpty IdentDecl -> ([Pos SizeIdent], [SizeConstraint SizeExpr]) -> PBody -> PNode
