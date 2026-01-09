@@ -1,9 +1,9 @@
 {-# LANGUAGE InstanceSigs #-}
 
-module Commons.TypingError
-  ( TypingError (),
-    CanFail (),
+module Commons.Error
+  ( CanFail (),
     reportError,
+    reportLocatedError,
     addError,
     runCanFail,
     collapse,
@@ -12,18 +12,12 @@ module Commons.TypingError
   )
 where
 
-import Commons.Position (Pos (..))
-import Data.List.NonEmpty (NonEmpty (..))
+import Commons.Position (Pos (), showErrorMessage)
+import Data.Foldable1 (intercalate1)
+import Data.List.NonEmpty (NonEmpty (..), nub)
 import qualified Data.List.NonEmpty as NonEmpty
-import qualified Data.Set as Set
-import Data.Text.Lazy (Text)
-import Text.Megaparsec.Error
-import Text.Megaparsec.State (initialPosState)
 
-data Err = Err Int TypingError
-  deriving (Eq, Ord)
-
-data CanFail a = Ok a | Error (NonEmpty Err)
+data CanFail a = Ok !a | Error !(NonEmpty (Pos String))
 
 instance Functor CanFail where
   {-# INLINEABLE fmap #-}
@@ -50,6 +44,11 @@ instance Applicative CanFail where
   liftA2 _ (Ok _) (Error s) = Error s
   liftA2 _ (Error s) (Error s') = Error $ s <> s'
 
+instance Monad CanFail where
+  (>>=) :: CanFail a -> (a -> CanFail b) -> CanFail b
+  (>>=) (Ok x) f = f x
+  (>>=) (Error s) _ = Error s
+
 instance (Semigroup a) => Semigroup (CanFail a) where
   (<>) :: (Semigroup a) => CanFail a -> CanFail a -> CanFail a
   (<>) = liftA2 (<>)
@@ -72,29 +71,21 @@ embed (Error l) = pure $ Error l
 collapseA :: (Applicative f) => CanFail (f (CanFail a)) -> f (CanFail a)
 collapseA = fmap collapse . embed
 
-data TypingError = TypingError !String !Int
-  deriving (Eq, Ord)
-
 {-# INLINEABLE reportError #-}
 reportError :: Pos b -> String -> CanFail a
-reportError (L pos _ end) err = Error . NonEmpty.singleton . Err pos $ TypingError err (end - pos)
+reportError pos err = Error . NonEmpty.singleton $ err <$ pos
+
+{-# INLINEABLE reportLocatedError #-}
+reportLocatedError :: Pos String -> CanFail a
+reportLocatedError = Error . NonEmpty.singleton
 
 {-# INLINEABLE addError #-}
 addError :: CanFail b -> Pos c -> String -> CanFail a
 addError (Ok _) pos err = reportError pos err
-addError (Error s) (L pos _ end) err = Error $ NonEmpty.cons (Err pos (TypingError err (end - pos))) s
+addError (Error s) pos err = Error $ NonEmpty.cons (err <$ pos) s
 
-runCanFail :: FilePath -> Text -> CanFail a -> Either (ParseErrorBundle Text TypingError) a
-runCanFail fileName input (Error s) = Left $ ParseErrorBundle errList (initialPosState fileName input)
-  where
-    errList = toError <$> (NonEmpty.sortBy cmpErr $ NonEmpty.nub s)
-    cmpErr (Err x _) (Err y _) = compare x y
-    toError (Err pos desc) = FancyError pos . Set.singleton . ErrorCustom $ desc
-runCanFail _ _ (Ok x) = Right x
-
-instance ShowErrorComponent TypingError where
-  showErrorComponent :: TypingError -> String
-  showErrorComponent (TypingError t _) = t
-
-  errorComponentLen :: TypingError -> Int
-  errorComponentLen (TypingError _ l) = l
+runCanFail :: FilePath -> CanFail a -> Either String a
+runCanFail fileName (Error s) =
+  let msgs = nub $ showErrorMessage fileName <$> s
+   in Left $ intercalate1 "\n" msgs
+runCanFail _ (Ok x) = Right x

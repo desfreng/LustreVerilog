@@ -4,23 +4,23 @@
 
 module Typing.TypeExpr (checkExprType) where
 
-import Commons.Ast
-import Commons.BiList
+import Commons.Ast (BinOp, Constant, UnOp)
+import Commons.BiList (BiList (..))
 import qualified Commons.BiList as BiList
-import Commons.Ids
-import Commons.Position
+import Commons.Error (CanFail, collapseA, embed, reportError)
+import Commons.Ids (Ident, VarId (FromIdent), VarIdent)
+import Commons.Position (Pos (..))
 import Commons.Tree (Tree (..))
 import qualified Commons.Tree as Tree
-import Commons.Types
-import Commons.TypingError
-import Data.Bifunctor
+import Commons.Types (AtomicTType (TBool), BitVectorKind)
+import Data.Bifunctor (Bifunctor (second))
 import Data.Foldable1 (Foldable1 (head, toNonEmpty))
-import Data.Functor
+import Data.Functor ((<&>))
 import Data.List.NonEmpty (NonEmpty (..))
-import Parsing.Ast
-import Typing.Ast
+import Parsing.Ast (Expr, ExprDesc (..), SizeExpr)
+import Typing.Ast (TEquation (..), TExpr (..), exprType)
 import Typing.CheckAtomicExpr
-import Typing.ExprEnv
+import Typing.ExprEnv (ExprEnv, buildFbyEq, buildIfCondEq, unifToExpr)
 import Typing.TypeUnification
 import Prelude hiding (head)
 
@@ -59,7 +59,7 @@ cstExpr :: Pos a -> EqRHS -> Constant -> ExprEnv (CanFail ExprCand)
 cstExpr loc rhs@(TreeNode _) _ = return $ invalidTypeForExpr loc rhs
 cstExpr loc (TreeLeaf typ) cst = fmap TreeLeaf <$> typeConstantExpr loc typ cst
 
-identExpr :: Pos a -> EqRHS -> Pos Ident -> ExprEnv (CanFail ExprCand)
+identExpr :: Pos a -> EqRHS -> Ident -> ExprEnv (CanFail ExprCand)
 identExpr loc rhs@(TreeNode _) _ = return $ invalidTypeForExpr loc rhs
 identExpr loc (TreeLeaf typ) vName = fmap TreeLeaf <$> typeIdentExpr loc typ vName
 
@@ -75,11 +75,11 @@ concatExpr :: Pos a -> EqRHS -> Expr -> Expr -> ExprEnv (CanFail ExprCand)
 concatExpr loc rhs@(TreeNode _) _ _ = return $ invalidTypeForExpr loc rhs
 concatExpr loc (TreeLeaf typ) lhs rhs = fmap TreeLeaf <$> typeConcatExpr loc typ lhs rhs
 
-sliceExpr :: Pos a -> EqRHS -> Expr -> (Int, Int) -> ExprEnv (CanFail ExprCand)
+sliceExpr :: Pos a -> EqRHS -> Expr -> (SizeExpr, SizeExpr) -> ExprEnv (CanFail ExprCand)
 sliceExpr loc rhs@(TreeNode _) _ _ = return $ invalidTypeForExpr loc rhs
 sliceExpr loc (TreeLeaf typ) arg index = fmap TreeLeaf <$> typeSliceExpr loc typ arg index
 
-selectExpr :: Pos a -> EqRHS -> Expr -> Int -> ExprEnv (CanFail ExprCand)
+selectExpr :: Pos a -> EqRHS -> Expr -> SizeExpr -> ExprEnv (CanFail ExprCand)
 selectExpr loc rhs@(TreeNode _) _ _ = return $ invalidTypeForExpr loc rhs
 selectExpr loc (TreeLeaf typ) arg index = fmap TreeLeaf <$> typeSelectExpr loc typ arg index
 
@@ -95,10 +95,10 @@ buildAndUnify loc lhs rhs = do
     Nothing -> do
       rhsTyp <- Tree.showA showExpType lhs
       lhsTyp <- Tree.showA showTyp rhs
-      return . reportError loc $ "Cannot unify " <> rhsTyp <> " with " <> lhsTyp <> "."
+      return . reportError loc $ "Cannot unify " <> lhsTyp <> " with " <> rhsTyp <> "."
   where
     showTyp = unifToExpr . showTypeCand . exprType
-    showExpType = return . show
+    showExpType = return . show . snd
 
     unifyLeaves (v, expE) tExpr = unifToExpr (checkExpected loc expE (exprType tExpr)) <&> fmap (v,tExpr,)
 

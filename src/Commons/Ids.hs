@@ -3,7 +3,7 @@
 module Commons.Ids where
 
 import Commons.Position
-import Data.Text.Lazy (Text, unpack)
+import Data.Text (Text, unpack)
 import Prettyprinter (Doc, Pretty (..), unsafeViaShow)
 
 newtype Ident = Ident Text
@@ -17,9 +17,17 @@ instance Pretty Ident where
   pretty :: Ident -> Doc ann
   pretty = unsafeViaShow
 
--- | Unique Identifier of custom Data Type in a Lustre Program
-newtype TypeIdent = TypeIdent (Pos Ident)
-  deriving (Show, Eq, Ord)
+-- | Identifier of size variablein a Lustre Node
+newtype SizeIdent = SizeIdent Ident
+  deriving (Eq, Ord)
+
+instance Show SizeIdent where
+  show :: SizeIdent -> String
+  show (SizeIdent nId) = show nId
+
+instance Pretty SizeIdent where
+  pretty :: SizeIdent -> Doc ann
+  pretty = unsafeViaShow
 
 -- | Unique Identifier of a Node in a Lustre Program
 newtype NodeIdent = NodeIdent Ident

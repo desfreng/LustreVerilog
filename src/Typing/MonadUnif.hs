@@ -12,8 +12,8 @@ module Typing.MonadUnif
   )
 where
 
+import Commons.Error (CanFail, collapseA, reportError)
 import Commons.Position (Pos)
-import Commons.TypingError (CanFail, collapseA, reportError)
 import Control.Monad.Reader (MonadReader, asks)
 import Control.Monad.State.Strict (MonadState (state), gets)
 import Data.IntMap (IntMap)

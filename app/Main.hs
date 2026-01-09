@@ -1,20 +1,25 @@
-{-# LANGUAGE TupleSections #-}
-
 module Main (main) where
 
-import qualified Data.ByteString.Lazy as B
-import Data.Maybe
-import Data.Text.Lazy (Text, unpack)
-import Data.Text.Lazy.Encoding (decodeUtf8)
-import Data.Text.Lazy.IO (writeFile)
+import Control.Exception (IOException, catch)
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as B
+import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Text.IO (writeFile)
 import LustreVerilog
 import Options.Applicative
-import Paths_LustreVerilog
+import Paths_LustreVerilog (getDataDir)
 import System.Exit (ExitCode (..), exitWith)
 import Text.Pretty.Simple (pPrint)
+import Text.Printf (printf)
 import Prelude hiding (writeFile)
 
-data Action = GetStdLibDir | ParsingStage | TypingStage | CompileAst | CompileStage Text
+data Action
+  = GetStdLibDir
+  | ParsingStage
+  | TypingStage
+  | CompileAst
+  | CompileStage Text
 
 data CompilerOptions = CompilerOptions
   { compilerAction :: Action,
@@ -61,9 +66,7 @@ compilerOptionsParser =
             <|> flag' ActiveLow (long "reset-high" <> help "Reset is active high")
             <|> pure ActiveLow
         )
-    <*> ( (Just <$> argument str (metavar "FILE" <> help "Input source file to compile"))
-            <|> pure Nothing
-        )
+    <*> optional (argument str (metavar "FILE" <> help "Input source file to compile"))
 
 main :: IO ()
 main = do
@@ -79,38 +82,58 @@ runCompiler :: CompilerOptions -> IO ()
 runCompiler opts =
   case compilerAction opts of
     GetStdLibDir -> printStdLib
-    _ ->
-      let inFile = fromMaybe (error "missing input file.") $ inputFile opts
-       in do
-            (path, txt) <- readInputFile inFile
-            ast <- parseInput (intSize opts) path txt
-            tast <- typeInput path txt ast
-            case compilerAction opts of
-              ParsingStage -> dumpIfDebug opts ast
-              TypingStage -> dumpIfDebug opts tast
-              CompileAst -> pPrint $ transformAst tast
-              CompileStage mainModule ->
-                maybe (putStrLn $ "There is no node: " <> unpack mainModule) (writeFile $ outputFile opts) $ compileInput opts mainModule tast
+    _ -> do
+      (path, fData) <- readInput opts
+      ast <- parseInput (intSize opts) path fData
+      case compilerAction opts of
+        ParsingStage -> dumpIfDebug opts ast
+        _ -> do
+          tast <- typeInput path ast
+          let cast = transformAst tast
+          case compilerAction opts of
+            TypingStage -> dumpIfDebug opts tast
+            CompileAst -> dumpIfDebug opts cast
+            CompileStage mainModule -> compileInput opts mainModule cast
 
 printStdLib :: IO ()
 printStdLib = getDataDir >>= putStrLn
 
-readInputFile :: String -> IO (String, Text)
-readInputFile "-" = ("stdin",) . decodeUtf8 <$> B.getContents
-readInputFile file = (file,) . decodeUtf8 <$> B.readFile file
-
-parseInput :: Int -> FilePath -> Text -> IO PAst
-parseInput defaultIntSize path txt = case parseFile defaultIntSize path txt of
-  Left err -> putStrLn (errorBundlePretty err) >> exitWith (ExitFailure 2)
-  Right ast -> return ast
+exitWithError :: Int -> String -> IO a
+exitWithError code err = putStrLn err >> exitWith (ExitFailure code)
 
 dumpIfDebug :: (Show a) => CompilerOptions -> a -> IO ()
 dumpIfDebug opts ast = if debug opts then pPrint ast else putStrLn "No Error."
 
-typeInput :: FilePath -> Text -> PAst -> IO TAst
-typeInput path txt ast = case typeFile path txt ast of
-  Left err -> putStrLn (errorBundlePretty err) >> exitWith (ExitFailure 3)
+readInput :: CompilerOptions -> IO (FilePath, ByteString)
+readInput opts = case inputFile opts of
+  Nothing -> exitWithError 2 "Missing input file"
+  Just path -> do
+    fData <-
+      catch
+        (if path == "-" then B.getContents else B.readFile path)
+        ( \e -> do
+            let err = show (e :: IOException)
+            exitWithError 3 $ printf "Error: %s" err
+        )
+    return (path, fData)
+
+parseInput :: Int -> FilePath -> ByteString -> IO PAst
+parseInput defaultIntSize path txt =
+  case parseFile defaultIntSize path txt of
+    Left err -> exitWithError 1 err
+    Right ast -> return ast
+
+typeInput :: FilePath -> PAst -> IO TAst
+typeInput path ast = case typeFile path ast of
+  Left err -> exitWithError 1 err
   Right tast -> return tast
 
-compileInput :: CompilerOptions -> Text -> TAst -> Maybe Text
-compileInput opt mainMod = toVerilog (resetKind opt) mainMod . transformAst
+compileInput :: CompilerOptions -> Text -> CAst -> IO ()
+compileInput opt mainMod cast = case toVerilog (resetKind opt) mainMod cast of
+  Left err -> exitWithError 3 err
+  Right out ->
+    if outputFile opt == "-"
+      then
+        putStrLn $ T.unpack out
+      else
+        writeFile (outputFile opt) out

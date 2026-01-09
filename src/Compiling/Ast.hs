@@ -2,12 +2,12 @@
 
 module Compiling.Ast where
 
-import Commons.Ast (BinOp, Constant, Node, UnOp)
+import Commons.Ast (BinOp, Constant, Node, NodeBody, UnOp)
 import Commons.Ids (NodeIdent, VarId, varIdPrefix)
-import Commons.Types (BVSize)
+import Commons.Size (Size)
 import Data.List.NonEmpty (NonEmpty)
 
-data CConstant = CConstant BVSize Constant
+data CConstant = CConstant Size Constant
 
 data CUnOp = CUnNot | CUnNeg
   deriving (Eq, Ord)
@@ -68,19 +68,21 @@ data CAction
   | -- | Concat Expression: @a ++ b@
     ConcatCAct CVal CVal
   | -- | Slice Expression: @a[1:3]@
-    SliceCAct CVal (BVSize, BVSize)
+    SliceCAct CVal (Size, Size)
   | -- | Select Expression: @a[1]@
-    SelectCAct CVal BVSize
+    SelectCAct CVal Size
   deriving (Show)
 
 data CEquation
   = -- | The simplest equation possible: @x = e@
     SimpleCEq CVar CAction
-  | -- | A call to another node : @(x, ..., z) = f(a, ..., b)@
-    CallCEq (NonEmpty CVar) NodeIdent [CVal]
+  | -- | A call to another node : @(x, ..., z) = f[N, ..., M](a, ..., b)@
+    CallCEq (NonEmpty CVar) NodeIdent [Size] [CVal]
   deriving (Show)
 
-type CNode = Node CVar CEquation
+type CBody = NodeBody CVar CEquation
+
+type CNode = Node CBody
 
 type CAst = [(NodeIdent, CNode)]
 

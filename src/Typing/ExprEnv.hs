@@ -1,7 +1,5 @@
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TupleSections #-}
 
 module Typing.ExprEnv
@@ -9,6 +7,7 @@ module Typing.ExprEnv
     unifToExpr,
     findNode,
     findVariable,
+    isCurrentNode,
     buildIfCondEq,
     buildFbyEq,
     buildCallEq,
@@ -16,33 +15,34 @@ module Typing.ExprEnv
   )
 where
 
-import Commons.Ast
-import Commons.Ids
-import Commons.Position
-import Commons.Types
-import Commons.TypingError
-import Control.Monad (zipWithM)
-import Control.Monad.Reader
-import Control.Monad.State
-import Data.Functor
+import Commons.Ast (Constant, NodeSignature)
+import Commons.Error (CanFail, reportError)
+import Commons.Ids (Ident (..), NodeIdent (..), VarId (..), VarIdent (..))
+import Commons.Position (Pos (..))
+import Commons.Size (Size)
+import Commons.Types (AtomicTType (TBool))
+import Control.Monad.Reader (ReaderT (..), asks)
+import Control.Monad.State (StateT (runStateT), lift, modify, state)
+import Data.Functor ((<&>))
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
 import Data.Map.Lazy (Map, (!))
-import Data.Set
-import qualified Data.Set as Set
-import Data.Text.Lazy (unpack)
-import Typing.Ast
-import Typing.Environments
-import Typing.NodeEnv (NodeEnv, toNodeEnv)
+import Data.Text (unpack)
+import Typing.Ast (TEquation (..), TExpr (ConstantTExpr, VarTExpr))
+import Typing.NodeEnv (NodeEnv, NodeMapping, toNodeEnv)
+import Typing.NodeVarEnv (VarMapping)
+import qualified Typing.SizeEnv as S
 import Typing.TypeUnification (TypeCand, TypeUnifier, runUnifier)
 
 type TCandEq = TEquation TypeCand
 
 findNode :: Pos Ident -> ExprEnv (CanFail (NodeIdent, NodeSignature))
-findNode nodeName = ExprEnv $ asks (findNode' . fst)
+findNode nodeName = ExprEnv $ asks (findNode' . \(_, x, _) -> x)
   where
     nodeId = NodeIdent $ unwrap nodeName
+
+    findNode' :: Map NodeIdent (CanFail a) -> CanFail (NodeIdent, a)
     findNode' ns =
       case Map.lookup nodeId ns of
         Just sig -> (nodeId,) <$> sig
@@ -51,15 +51,18 @@ findNode nodeName = ExprEnv $ asks (findNode' . fst)
            in reportError nodeName $ "Unknown node " <> unpack s <> "."
 
 findVariable :: Pos Ident -> ExprEnv (CanFail (VarIdent, AtomicTType))
-findVariable varName = ExprEnv $ asks (findVariable' . snd)
+findVariable varName = ExprEnv $ asks (findVariable' . \(_, _, x) -> x)
   where
     varId = VarIdent varName
     findVariable' vs =
       case Map.lookup varId vs of
-        Just sig -> (varId,) <$> sig
+        Just sig -> pure (varId, sig)
         Nothing ->
           let Ident s = unwrap varName
            in reportError varName $ "Unknown variable " <> unpack s <> "."
+
+isCurrentNode :: NodeIdent -> ExprEnv Bool
+isCurrentNode nId = ExprEnv $ asks $ \(n, _, _) -> n == nId
 
 unifToExpr :: TypeUnifier a -> ExprEnv a
 unifToExpr = ExprEnv . lift . lift
@@ -74,24 +77,8 @@ data ExprState = ExprState
     nextVarId :: Int
   }
 
-newtype ExprEnv a = ExprEnv (ReaderT (NodeMapping, VarMapping) (StateT ExprState TypeUnifier) a)
-
-instance Functor ExprEnv where
-  fmap :: (a -> b) -> ExprEnv a -> ExprEnv b
-  fmap f (ExprEnv m) = ExprEnv $ f <$> m
-
-instance Applicative ExprEnv where
-  pure :: a -> ExprEnv a
-  pure = ExprEnv . pure
-
-  (<*>) :: ExprEnv (a -> b) -> ExprEnv a -> ExprEnv b
-  (<*>) (ExprEnv f) (ExprEnv arg) = ExprEnv $ f <*> arg
-
-instance Monad ExprEnv where
-  (>>=) :: ExprEnv a -> (a -> ExprEnv b) -> ExprEnv b
-  (>>=) (ExprEnv m) f = ExprEnv $ m >>= unwrapM . f
-    where
-      unwrapM (ExprEnv x) = x
+newtype ExprEnv a = ExprEnv (ReaderT (NodeIdent, NodeMapping, VarMapping) (StateT ExprState TypeUnifier) a)
+  deriving (Functor, Applicative, Monad)
 
 freshVar :: (Int -> VarId) -> VarInfo -> ExprEnv VarId
 freshVar gVar vInfo = ExprEnv . state $ freshVar' gVar vInfo
@@ -117,40 +104,38 @@ buildFbyEq varOrig initFby nextFby typeCand = do
   () <- addEq (FbyTEq vId initFby nextFby)
   return vId
 
-buildCallEq :: (NodeIdent, NodeSignature) -> [TExpr TypeCand] -> ExprEnv (NonEmpty (VarId, AtomicTType))
-buildCallEq (nodeId, nodeSig) args = do
-  outVarsIds <- mapM freshOutVarFromTyp (outputType nodeSig)
-  inVarsArgs <- zipWithM freshInVarFromTyp (inputTypes nodeSig) args
-  () <- addEq (CallTEq (fst <$> outVarsIds) nodeId inVarsArgs)
+buildCallEq :: NodeIdent -> [Size] -> [(TExpr TypeCand, AtomicTType)] -> NonEmpty AtomicTType -> ExprEnv (NonEmpty (VarId, AtomicTType))
+buildCallEq nodeId sizeVarsArgs args outTypes = do
+  outVarsIds <- mapM freshOutVarFromTyp outTypes
+  inVarsArgs <- mapM freshInVarFromTyp args
+  () <- addEq (CallTEq (fst <$> outVarsIds) nodeId sizeVarsArgs inVarsArgs)
   return outVarsIds
   where
+    freshOutVarFromTyp :: AtomicTType -> ExprEnv (VarId, AtomicTType)
     freshOutVarFromTyp t = freshVar (OutputCallVar nodeId) (WithType t) <&> (,t)
 
-    freshInVarFromTyp _ (ConstantTExpr cst typ) = return $ Left (cst, typ)
-    freshInVarFromTyp _ (VarTExpr var _) = return $ Right var
-    freshInVarFromTyp (_, t) e = do
+    freshInVarFromTyp :: (TExpr TypeCand, AtomicTType) -> ExprEnv (Either (Constant, TypeCand) VarId)
+    freshInVarFromTyp (ConstantTExpr cst typ, _) = return $ Left (cst, typ)
+    freshInVarFromTyp (VarTExpr var _, _) = return $ Right var
+    freshInVarFromTyp (e, t) = do
       newVar <- freshVar (InputCallVar nodeId) (WithType t)
       () <- addEq $ SimpleTEq newVar e
       return $ Right newVar
 
-runExprEnv :: NodeEnvironment VarIdent -> ExprEnv (CanFail (NonEmpty TCandEq)) -> NodeEnv (CanFail TNode)
-runExprEnv nodeEnv m = toNodeEnv (runExprEnv' nodeEnv m)
+runExprEnv :: ExprEnv (CanFail (NonEmpty TCandEq)) -> NodeIdent -> VarMapping -> S.SizeInfo -> NodeEnv (CanFail (Map VarId AtomicTType, NonEmpty (TEquation AtomicTType)))
+runExprEnv m nId vMapping sInfo = toNodeEnv $ runExprEnv' m nId vMapping sInfo
 
-runExprEnv' :: NodeEnvironment VarIdent -> ExprEnv (CanFail (NonEmpty TCandEq)) -> NodeMapping -> CanFail TNode
-runExprEnv' nodeEnv (ExprEnv m) ns = Node <$> newNodeEnv <*> sanitizedEqs
+runExprEnv' :: ExprEnv (CanFail (NonEmpty TCandEq)) -> NodeIdent -> VarMapping -> S.SizeInfo -> NodeMapping -> CanFail (Map VarId AtomicTType, NonEmpty (TEquation AtomicTType))
+runExprEnv' (ExprEnv m) nId vMapping sInfo ns =
+  let m' = runReaderT m (nId, ns, vMapping)
+      m'' = runStateT m' (ExprState {sideEqs = [], varsInfo = Map.empty, nextVarId = 0})
+      ((tEqsF, s), typeSF) = runUnifier sInfo m''
+   in do
+        (tEqs, typeS) <- (,) <$> tEqsF <*> typeSF
+        let sEq = fmap (typeS !) <$> NonEmpty.appendList tEqs (sideEqs s)
+        let locEnv = Map.foldMapWithKey (fromFreshVars typeS) (varsInfo s)
+        return (locEnv, sEq)
   where
-    m' = runReaderT m (ns, vMapping nodeEnv)
-    m'' = runStateT m' (ExprState {sideEqs = [], varsInfo = Map.empty, nextVarId = 0})
-    ((tEqs, s), typeS) = runUnifier m''
-    sanitizedEqs = fmap fmap (sanitizeEq <$> typeS) <*> (NonEmpty.prependList (sideEqs s) <$> tEqs)
-    newNodeEnv = buildNewEnv <$> typeS <*> nCtx nodeEnv
-
-    buildNewEnv typSt nCtx =
-      let (newLocals, newVarTypes) = Map.foldMapWithKey (fromFreshVars typSt) (varsInfo s)
-       in newContext nCtx FromIdent newLocals newVarTypes
-
-    fromFreshVars :: Map TypeCand AtomicTType -> VarId -> VarInfo -> (Set VarId, Map VarId AtomicTType)
-    fromFreshVars _ vId (WithType aTyp) = (Set.singleton vId, Map.singleton vId aTyp)
-    fromFreshVars typSt vId (DerivingFrom tCand) = (Set.singleton vId, Map.singleton vId (typSt ! tCand))
-
-    sanitizeEq typSt eq = fmap (typSt !) eq
+    fromFreshVars :: Map TypeCand AtomicTType -> VarId -> VarInfo -> Map VarId AtomicTType
+    fromFreshVars _ vId (WithType aTyp) = Map.singleton vId aTyp
+    fromFreshVars typSt vId (DerivingFrom tCand) = Map.singleton vId (typSt ! tCand)

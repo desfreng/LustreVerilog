@@ -2,19 +2,18 @@
 
 module Compiling.Transform (transformAst) where
 
-import Commons.Ast
-import Commons.Ids
-import Commons.Types
-import Compiling.Ast
-import Control.Monad.State
-import Data.Bifunctor
-import Data.Functor
+import Commons.Ast (Ast (..), BinOp (..), Node (..), NodeBody (..), UnOp (..))
+import Commons.Ids (VarId)
+import Commons.Types (AtomicTType (..), BitVectorKind (..), typeSize)
+import Compiling.Ast (CAction (..), CAst, CBinOp (..), CBody, CConstant (..), CEquation (..), CNode, CUnOp (..), CVal, CVar (..))
+import Control.Monad.State (MonadState (state), State, runState)
+import Data.Bifunctor (Bifunctor (bimap, second))
+import Data.Functor ((<&>))
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map (Map)
 import qualified Data.Map as Map
-import qualified Data.Set as Set
-import Typing.Ast
+import Typing.Ast (TAst, TBody, TEquation (..), TExpr (..), TNode, TNodeEq, exprType)
 
 data TransformState = TransformState
   { newEqs :: [CEquation],
@@ -38,17 +37,21 @@ defWithAct gVar vId typ act = state $ freshVar' (gVar vId)
           newNextId = nextVarId + 1
        in (Right v, TransformState newNewEqs newNewVarsType newNextId)
 
-runTransformMonad :: NodeContext VarId -> TransformMonad (NonEmpty CEquation) -> CNode
-runTransformMonad nCtx m =
-  let (eqs, s) = runState m TransformState {newEqs = mempty, newVarsType = mempty, nextVarId = 0}
-      newVars = Map.foldMapWithKey (\v _ -> Set.singleton v) $ newVarsType s
-      newCtx = newContext nCtx FromVarId newVars $ newVarsType s
-   in Node newCtx $ NonEmpty.prependList (newEqs s) eqs
+runTranformMonad :: TransformMonad (NonEmpty CEquation) -> (NonEmpty CEquation, TransformState)
+runTranformMonad m =
+  runState m TransformState {newEqs = mempty, newVarsType = mempty, nextVarId = 0}
 
 transformAst :: TAst -> CAst
 transformAst Ast {nodes} = second transformNode <$> nodes
   where
-    transformNode (Node nCtx nEqs) = runTransformMonad nCtx $ mapM transformEq nEqs
+    transformNode :: TNode -> CNode
+    transformNode (Node nSig nBody) = Node nSig $ transformBody <$> nBody
+
+    transformBody :: TBody -> CBody
+    transformBody NodeBody {bodyLocal, bodyEqs} =
+      let (orgEq, s) = runTranformMonad $ mapM transformEq bodyEqs
+          newLocals = Map.mapKeysMonotonic FromVarId bodyLocal <> newVarsType s
+       in NodeBody newLocals $ NonEmpty.appendList orgEq $ newEqs s
 
 transformEq :: TNodeEq -> TransformMonad CEquation
 transformEq (SimpleTEq v arg) = SimpleCEq (FromVarId v) <$> transformExpr v arg
@@ -56,8 +59,8 @@ transformEq (FbyTEq v initE nextE) = do
   initVar <- defVar FbyInit v initE
   nextVar <- defVar FbyNext v nextE
   return $ SimpleCEq (FromVarId v) (FbyCAct initVar nextVar)
-transformEq (CallTEq vars node args) =
-  return $ CallCEq (FromVarId <$> vars) node (bimap buildCConst FromVarId <$> args)
+transformEq (CallTEq vars node sizeParams args) =
+  return $ CallCEq (FromVarId <$> vars) node sizeParams (bimap buildCConst FromVarId <$> args)
   where
     buildCConst (cst, typ) = CConstant (typeSize typ) cst
 

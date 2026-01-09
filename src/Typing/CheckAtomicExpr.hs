@@ -1,5 +1,5 @@
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TupleSections #-}
+{-# OPTIONS_GHC -Wno-typed-holes #-}
 
 module Typing.CheckAtomicExpr
   ( expectAtomicType,
@@ -15,23 +15,41 @@ module Typing.CheckAtomicExpr
   )
 where
 
-import Commons.Ast
-import Commons.Ids
-import Commons.Position
-import Commons.Types
-import Commons.TypingError
-import qualified Control.Monad as Monad
-import Data.Functor
+import Commons.Ast (BinOp (..), Constant, NodeSignature (..), SizeConstraint (..), UnOp (..))
+import Commons.Error (CanFail, collapseA, embed, reportError)
+import Commons.Ids (Ident, NodeIdent, SizeIdent, VarId (..), VarIdent)
+import Commons.Position (Pos (..))
+import Commons.Size (Size, hasVar, subSize, subst, sumSize, varSize)
+import Commons.Types (AtomicTType (..), BitVectorKind (..))
+import Control.Monad (zipWithM)
+import Data.Bifunctor (second)
+import Data.Functor (($>), (<&>))
+import Data.List (intercalate, unsnoc)
 import Data.List.NonEmpty (NonEmpty (..))
-import Parsing.Ast
-import Typing.Ast
+import qualified Data.List.NonEmpty as NonEmpty
+import Data.Map ((!))
+import qualified Data.Map as Map
+import Data.Maybe (catMaybes)
+import Data.Monoid (Ap (..))
+import Parsing.Ast (Expr, ExprDesc (..), SizeExpr)
+import Text.Printf (printf)
+import Typing.Ast (TExpr (..), exprType)
 import Typing.ExprEnv
 import Typing.TypeUnification
+
+foldMapM :: (Applicative f, Foldable t, Monoid b) => (a -> f b) -> t a -> f b
+foldMapM f = getAp <$> foldMap (Ap . f)
+
+zipWithM' :: (Monad m) => (a -> b -> m c) -> NonEmpty a -> NonEmpty b -> m (NonEmpty c)
+zipWithM' f x = mapM (uncurry f) . NonEmpty.zip x
 
 type AtomExprCand = (VarIdent, TExpr TypeCand, TypeCand)
 
 getTypeCand :: AtomExprCand -> TypeCand
 getTypeCand (_, _, x) = x
+
+getTExpr :: AtomExprCand -> TExpr TypeCand
+getTExpr (_, x, _) = x
 
 type TypeConstraint = (VarIdent, ExpectedType)
 
@@ -52,6 +70,10 @@ rawSigOrUnsig var = (var, toAtom $ expectBitVector Raw <> expectBitVector Unsign
 
 invalidTypeForExpr :: Pos a -> TypeConstraint -> CanFail b
 invalidTypeForExpr loc eTyp = reportError loc $ "This expression does not have the type " <> show eTyp <> "."
+
+buildArgConstr :: AtomicTType -> ExpectedType
+buildArgConstr TBool = toAtom $ expectBool <> expectBitVector Raw
+buildArgConstr (TBitVector k _) = toAtom $ expectBitVector k
 
 expectAtomicType :: TypeConstraint -> Expr -> ExprEnv (CanFail AtomExprCand)
 expectAtomicType typ e = typeAtomicExpr' (unwrap e)
@@ -77,11 +99,11 @@ typeConstantExpr :: Pos a -> TypeConstraint -> Constant -> ExprEnv (CanFail Atom
 typeConstantExpr loc typ cst =
   unifToExpr (constantTypeCand loc cst) >>= buildAndUnify loc typ . ConstantTExpr cst
 
-typeIdentExpr :: Pos a -> TypeConstraint -> Pos Ident -> ExprEnv (CanFail AtomExprCand)
-typeIdentExpr loc typ var = findVariable var >>= collapseA . fmap buildIdent
+typeIdentExpr :: Pos a -> TypeConstraint -> Ident -> ExprEnv (CanFail AtomExprCand)
+typeIdentExpr loc typ var = findVariable (var <$ loc) >>= collapseA . fmap buildIdent
   where
     buildIdent (varId, varTyp) =
-      unifToExpr (fromAtomicType loc varTyp)
+      unifToExpr (fromAtomicType loc "" varTyp)
         >>= buildAndUnify loc typ . VarTExpr (FromIdent varId)
 
 typeUnOpExpr :: Pos a -> TypeConstraint -> UnOp -> Expr -> ExprEnv (CanFail AtomExprCand)
@@ -130,7 +152,7 @@ typeBinOpExpr loc typ@(var, _) op lhs rhs =
 
     buildBoolOp (_, tLhs, lhsTyp) (_, tRhs, rhsTyp) =
       unifToExpr (unifyTypeCand loc lhsTyp rhsTyp)
-        >>= embed . ($> unifToExpr (fromAtomicType loc TBool))
+        >>= embed . ($> unifToExpr (fromAtomicType loc "" TBool))
         >>= collapseA . fmap (buildAndUnify loc typ . BinOpTExpr op tLhs tRhs)
 
     buildBVOp (_, tLhs, lhsTyp) (_, tRhs, rhsTyp) =
@@ -145,9 +167,9 @@ typeConcatExpr loc typ@(var, _) lhs rhs = do
   tRhsSize <- unifToExpr . collapseA $ getFixedSize rhs . getTypeCand <$> tRhs
   collapseA $ buildConcat <$> tLhsSize <*> tRhsSize <*> tLhs <*> tRhs
   where
-    buildConcat (BVSize lhsSize) (BVSize rhsSize) (_, tLhs, _) (_, tRhs, _) =
-      let size = BVSize $ lhsSize + rhsSize
-       in unifToExpr (fromAtomicType loc . TBitVector Raw $ size)
+    buildConcat lhsSize rhsSize (_, tLhs, _) (_, tRhs, _) =
+      let size = sumSize lhsSize rhsSize
+       in unifToExpr (fromAtomicType loc "" . TBitVector Raw $ size)
             >>= buildAndUnify loc typ . ConcatTExpr tLhs tRhs
 
 typeAtomicIfExpr :: Pos a -> TypeConstraint -> Expr -> Expr -> Expr -> ExprEnv (CanFail AtomExprCand)
@@ -163,38 +185,128 @@ typeAtomicIfExpr loc typ@(var, _) cond tb fb = do
         >>= collapseA . fmap (buildAndUnify loc typ . IfTExpr condVarId tTrue tFalse)
 
 checkCall :: Pos a -> Pos Ident -> [Expr] -> ExprEnv (CanFail (NonEmpty (TExpr TypeCand)))
-checkCall loc node args = findNode node >>= collapseA . fmap typeAppExpr'
+checkCall loc node args = do
+  nSig <- findNode node
+  collapseA $ checkCall' loc args <$> nSig
+
+checkCall' :: Pos a -> [Expr] -> (NodeIdent, NodeSignature) -> ExprEnv (CanFail (NonEmpty (TExpr TypeCand)))
+checkCall' loc args (nodeName, nodeSig) = do
+  inArgs <- checkInputsLen args
+  sizeConstr <- embed $ fmap catMaybes . zipWithM gatherConstr (inputTypes nodeSig) . zip args <$> inArgs -- Gather Constraints
+  sizeSol <- unifToExpr $ collapseA $ solveSystem loc nodeSig <$> sizeConstr -- Solve Constraints
+  collapseA $ typeAppExpr' <$> inArgs <*> sizeSol
   where
-    typeAppExpr' n@(_, nodeSig) = checkInputs args nodeSig >>= embed . fmap (genOutVars n)
-    snd3 (_, x, _) = x
+    typeAppExpr' :: [AtomExprCand] -> SystemResult -> ExprEnv (CanFail (NonEmpty (TExpr TypeCand)))
+    typeAppExpr' tArgs sizeSol = do
+      tInArgs <- fmap sequenceA . sequenceA $ zipWith3 (unifyInputs sizeSol) args tArgs (inputTypes nodeSig) -- Forall non Constrained input, unify them
+      sConstr <- foldMapM (checkConstraint sizeSol) (sizeConstraints nodeSig) -- Checks Callee size constraints
+      recCall <- checkRecCall sizeSol -- Check Reccursive call
+      embed $ do () <- (<>) <$> sConstr <*> recCall; genOutVars sizeSol <$> tInArgs
 
-    genOutVars nodeSig tArgs =
-      let buildExpr (vId, vTyp) = do
-            tc <- unifToExpr (fromAtomicType loc vTyp)
+    genOutVars :: SystemResult -> [TExpr TypeCand] -> ExprEnv (NonEmpty (TExpr TypeCand))
+    genOutVars sizeSol tArgs =
+      let ctx = showContext nodeName sizeSol
+          buildExpr (orgId, orgTyp) (vId, vTyp) = do
+            tc <- unifToExpr (fromAtomicType loc (ctx orgId orgTyp) vTyp)
             return (VarTExpr vId tc)
-       in buildCallEq nodeSig tArgs >>= mapM buildExpr
+          substType typ = case typ of
+            TBool -> TBool
+            TBitVector k s -> TBitVector k $ subst (sizeSol !) s
+          sizeExpr = (sizeSol !) <$> sizeVars nodeSig
+          tArgsTyped = zip tArgs $ substType . snd <$> inputTypes nodeSig
+          outputType = substType . snd <$> outputTypes nodeSig
+       in do
+            outVars <- buildCallEq nodeName sizeExpr tArgsTyped outputType
+            zipWithM' buildExpr (outputTypes nodeSig) outVars
 
-    checkInputs nodeArgs nodeSig =
+    checkInputsLen :: [Expr] -> ExprEnv (CanFail [AtomExprCand])
+    checkInputsLen nodeArgs =
       let nodeNbArr = nodeArity nodeSig
           nbArgs = length nodeArgs
        in case compare nodeNbArr nbArgs of
-            LT ->
-              return . reportError loc $
-                "Too many arguments provided. Expected "
-                  <> show nodeNbArr
-                  <> ", found "
-                  <> show nbArgs
-                  <> "."
-            GT ->
-              return . reportError loc $
-                "Too few arguments provided. Expected "
-                  <> show nodeNbArr
-                  <> ", found "
-                  <> show nbArgs
-                  <> "."
-            EQ -> sequenceA <$> Monad.zipWithM unifyArg (inputTypes nodeSig) nodeArgs
+            LT -> return $ reportError loc $ printf "Too many arguments provided. Expected %d, found %d." nodeNbArr nbArgs
+            GT -> return $ reportError loc $ printf "Too few arguments provided. Expected %d, found %d." nodeNbArr nbArgs
+            EQ -> sequenceA <$> zipWithM unifyArg nodeArgs (inputTypes nodeSig)
 
-    unifyArg (vName, atyp) expr = expectAtomicType (vName, fromType atyp) expr <&> fmap snd3
+    checkConstraint :: SystemResult -> SizeConstraint Size -> ExprEnv (CanFail ())
+    checkConstraint sizeSol cstr = do
+      res <- unifToExpr $ checkSizeConstraint $ subst (sizeSol !) <$> cstr
+      let isInConstr v =
+            case cstr of
+              EqConstr x y -> hasVar x v || hasVar y v
+              GtConstr x y -> hasVar x v || hasVar y v
+              GeqConstr x y -> hasVar x v || hasVar y v
+              LtConstr x y -> hasVar x v || hasVar y v
+              LeqConstr x y -> hasVar x v || hasVar y v
+
+      let ctx = showResult isInConstr sizeSol
+      return $
+        if res
+          then pure ()
+          else reportError loc $ printf "Unable to verify the constraint %s in the context: %s" (show cstr) ctx
+
+    unifyArg :: Expr -> (VarIdent, AtomicTType) -> ExprEnv (CanFail AtomExprCand)
+    unifyArg arg nodeArg = expectAtomicType (second buildArgConstr nodeArg) arg
+
+    unifyInputs :: SystemResult -> Pos a -> AtomExprCand -> (VarIdent, AtomicTType) -> ExprEnv (CanFail (TExpr TypeCand))
+    unifyInputs sizeSol argLoc (_, tArg, _) t =
+      fmap getTExpr <$> buildAndUnify argLoc (buildArgType sizeSol t) tArg
+
+    buildArgType :: SystemResult -> (VarIdent, AtomicTType) -> TypeConstraint
+    buildArgType _ (argName, TBool) = (argName, fromType TBool)
+    buildArgType sizeSol (argName, TBitVector k s) =
+      (argName, fromType $ TBitVector k $ subst (sizeSol !) s)
+
+    gatherConstr :: (VarIdent, AtomicTType) -> (Pos a, AtomExprCand) -> ExprEnv (Maybe (Pos (Size, Size)))
+    gatherConstr (_, TBool) (_, (_, _, _)) = return Nothing
+    gatherConstr (_, TBitVector _ s) (argLoc, (_, _, tc)) =
+      do
+        argSize <- unifToExpr $ getSize tc
+        return $ case argSize of
+          Left _ -> Nothing
+          Right aS -> Just $ argLoc $> (s, aS)
+
+    showResult :: (SizeIdent -> Bool) -> SystemResult -> String
+    showResult p sizeSol =
+      let showEq (s, sEq) = printf "%s = %s" (show s) (show sEq)
+          varEq = showEq <$> Map.toList (Map.filterWithKey (\s _ -> p s) sizeSol)
+       in case unsnoc varEq of
+            Nothing -> ""
+            Just ([], l) -> l
+            Just (hds, l) -> printf "%s and %s" (intercalate ", " hds) l
+
+    showContext :: NodeIdent -> SystemResult -> VarIdent -> AtomicTType -> String
+    showContext nodeId sizeSol orgVarName orgVarType =
+      let isInType v =
+            case orgVarType of
+              TBool -> False
+              TBitVector _ s -> hasVar s v
+       in printf
+            "Instantiation of output variable %s (of type %s) from node %s with %s."
+            (show orgVarName)
+            (show orgVarType)
+            (show nodeId)
+            $ showResult isInType sizeSol
+
+    checkRecCall :: SystemResult -> ExprEnv (CanFail ())
+    checkRecCall sizeSol = do
+      sameNode <- isCurrentNode nodeName
+      if sameNode
+        then do
+          lexOrderOk <- checkLexOrder $ (\s -> (s, sizeSol ! s)) <$> sizeVars nodeSig
+          if not lexOrderOk
+            then return $ reportError loc $ "This node instantiation is not stricly decreasing in size. We have " <> showResult (const True) sizeSol <> "."
+            else return $ pure ()
+        else return $ pure ()
+
+    checkLexOrder :: [(SizeIdent, Size)] -> ExprEnv Bool
+    checkLexOrder [] = return False
+    checkLexOrder ((x, y) : rest) = do
+      res <- unifToExpr $ compareSize (varSize x) y
+      case res of
+        Just GT -> return True
+        Just EQ -> checkLexOrder rest
+        _ -> return False
 
 typeAtomicAppExpr :: Pos a -> TypeConstraint -> Pos Ident -> [Expr] -> ExprEnv (CanFail AtomExprCand)
 typeAtomicAppExpr loc typ node args = checkCall loc node args >>= collapseA . fmap typeAtomicAppExpr'
@@ -213,35 +325,48 @@ typeAtomicFbyExpr loc typ initE nextE = do
       fbyVar <- embed $ buildFbyEq v tTrue tFalse <$> tCand
       collapseA $ buildAndUnify loc typ <$> (VarTExpr <$> fbyVar <*> tCand)
 
-typeSliceExpr :: Pos a -> TypeConstraint -> Expr -> (Int, Int) -> ExprEnv (CanFail AtomExprCand)
-typeSliceExpr loc typ@(var, _) arg (i, j) = do
+typeSliceExpr :: Pos a -> TypeConstraint -> Expr -> (SizeExpr, SizeExpr) -> ExprEnv (CanFail AtomExprCand)
+typeSliceExpr loc typ@(var, _) arg (begSizeExpr, endSizeExpr) = do
   tArg <- expectAtomicType (raw var) arg
   tArgSize <- unifToExpr . collapseA $ getFixedSize arg . getTypeCand <$> tArg
-  collapseA $ buildSlice <$> tArgSize <*> tArg
+  begSize <- unifToExpr $ checkSizeExpr begSizeExpr -- begSize >= 0 is implicit
+  endSize <- unifToExpr $ checkSizeExpr endSizeExpr -- endSize >= 0 is implicit
+  collapseA $ buildSlice <$> tArgSize <*> tArg <*> begSize <*> endSize
   where
-    buildSlice (BVSize busSize) (_, tArg, _) =
-      if (0 <= i) && (i < j)
+    buildSlice :: Size -> AtomExprCand -> Size -> Size -> ExprEnv (CanFail AtomExprCand)
+    buildSlice busSize (_, tArg, _) i j = do
+      isInBound <- unifToExpr $ j `isSmaller` busSize -- j <= busSize
+      isWellFormed <- unifToExpr $ i `isStrictlySmaller` j -- i < j
+      if isInBound
         then
-          if j > busSize
-            then return $ reportError loc $ "The slice window is too large. The argument has " <> show busSize <> " buses."
+          if isWellFormed
+            then
+              unifToExpr (fromAtomicType loc "" . TBitVector Raw $ subSize j i)
+                >>= buildAndUnify loc typ . SliceTExpr tArg (i, j)
             else
-              unifToExpr (fromAtomicType loc . TBitVector Raw . BVSize $ j - i)
-                >>= buildAndUnify loc typ . SliceTExpr tArg (BVSize i, BVSize j)
-        else return $ reportError loc $ "Ill formed slice."
+              let msg = printf "In this slice expression, the lower bound %s is not always smaller than the greater bound %s." (show i) (show j)
+               in return $ reportError loc msg
+        else
+          let msg = printf "In this slice expression, the upper bound %s is not always is range. It can be greater than the expression size: %s" (show j) (show busSize)
+           in return $ reportError loc msg
 
-typeSelectExpr :: Pos a -> TypeConstraint -> Expr -> Int -> ExprEnv (CanFail AtomExprCand)
-typeSelectExpr loc typ@(var, _) arg index = do
+typeSelectExpr :: Pos a -> TypeConstraint -> Expr -> SizeExpr -> ExprEnv (CanFail AtomExprCand)
+typeSelectExpr loc typ@(var, _) arg indexSizeExpr = do
   tArg <- expectAtomicType (raw var) arg
   tArgSize <- unifToExpr . collapseA $ getFixedSize arg . getTypeCand <$> tArg
-  collapseA $ buildSelect <$> tArgSize <*> tArg
+  indexSize <- unifToExpr $ checkSizeExpr indexSizeExpr -- indexSize >= 0 is implicit
+  collapseA $ buildSelect <$> tArgSize <*> tArg <*> indexSize
   where
-    buildSelect (BVSize busSize) (_, tArg, _) =
-      if (index < busSize) && (index >= 0)
+    buildSelect :: Size -> AtomExprCand -> Size -> ExprEnv (CanFail AtomExprCand)
+    buildSelect busSize (_, tArg, _) i = do
+      isInBound <- unifToExpr $ i `isStrictlySmaller` busSize -- i < busSize
+      if isInBound
         then
-          unifToExpr (fromAtomicType loc TBool)
-            >>= buildAndUnify loc typ . SelectTExpr tArg (BVSize index)
+          unifToExpr (fromAtomicType loc "" TBool)
+            >>= buildAndUnify loc typ . SelectTExpr tArg i
         else
-          return $ reportError loc $ "Select bus does not exists. The argument has " <> show busSize <> " buses."
+          let msg = printf "In this select expression, the index %s is not always is range. It can be greater than the expression size: %s" (show i) (show busSize)
+           in return $ reportError loc msg
 
 typeConvertExpr :: Pos a -> TypeConstraint -> BitVectorKind -> Expr -> ExprEnv (CanFail AtomExprCand)
 typeConvertExpr loc typ@(var, _) kind arg = do
@@ -250,5 +375,5 @@ typeConvertExpr loc typ@(var, _) kind arg = do
   collapseA $ buildConvert <$> tArgSize <*> tArg
   where
     buildConvert busSize (_, tArg, _) =
-      unifToExpr (fromAtomicType loc (TBitVector kind busSize))
+      unifToExpr (fromAtomicType loc "" (TBitVector kind busSize))
         >>= buildAndUnify loc typ . ConvertTExpr tArg

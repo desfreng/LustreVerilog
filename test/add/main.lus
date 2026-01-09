@@ -1,4 +1,6 @@
-node main(x, y: i8) returns (res: i8);
+node main(x, y: i<N - M - 1>) returns (res: i<N - M - 1>);
+  size N, M
+  where N - M >= 1
 let
     res = x + y;
 tel

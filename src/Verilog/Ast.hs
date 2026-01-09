@@ -4,21 +4,25 @@
 
 module Verilog.Ast where
 
-import Commons.Ids (Ident, NodeIdent)
-import Commons.Types (BVSize (..))
+import Commons.Ast (Body)
+import Commons.Ids (Ident, NodeIdent, SizeIdent)
+import Commons.Size (Size, constantSize, isNull, subSize)
 import Compiling.Ast (CBinOp, CUnOp)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Map (Map)
-import Prettyprinter
+import Prettyprinter (Doc, Pretty (pretty), unsafeViaShow, (<+>))
 
-data Constant = Constant {valueSize :: BVSize, value :: Integer}
+data Constant = Constant
+  { valueSize :: Size,
+    value :: Integer
+  }
   deriving (Show)
 
 one :: Constant
-one = Constant (BVSize 1) 1
+one = Constant (constantSize 1) 1
 
 zero :: Constant
-zero = Constant (BVSize 1) 0
+zero = Constant (constantSize 1) 0
 
 data BaseModule
   = UnOpModule CUnOp
@@ -39,12 +43,9 @@ data ModuleName
 data ModuleControl a = ModuleControl {clockVar :: a, initVar :: a}
   deriving (Show)
 
-data StaticValue = FixedValue BVSize | DeclaredValue Ident
-  deriving (Show)
-
 data ModuleInst = ModuleInst
   { name :: ModuleName,
-    staticArgs :: [StaticValue],
+    sizeArgs :: [Size],
     controlArgs :: Maybe (ModuleControl Ident),
     inArgs :: [Either Constant Ident],
     outArgs :: NonEmpty Ident
@@ -56,18 +57,12 @@ data Expr
   | InstExpr ModuleInst
   deriving (Show)
 
-data VarSize = FixedSize BVSize | VariableSize Ident | DeltaSize Ident Ident | SumSize Ident Ident
-  deriving (Show)
-
-data VarDecl = WireDecl VarSize Ident
-  deriving (Show)
-
-data StaticDecl = StaticDecl {getStaticName :: Ident, getStaticValue :: (Maybe BVSize)}
+data VarDecl = WireDecl Size Ident
   deriving (Show)
 
 data ModuleHead = ModuleHead
   { moduleName :: ModuleName,
-    staticVars :: [StaticDecl],
+    moduleSize :: [SizeIdent],
     controlVars :: Maybe (ModuleControl VarDecl),
     inputVars :: [VarDecl],
     outputVars :: NonEmpty VarDecl
@@ -76,8 +71,13 @@ data ModuleHead = ModuleHead
 
 data Module = Module
   { moduleHead :: ModuleHead,
-    moduleLocal :: [VarDecl],
-    moduleBody :: (NonEmpty Expr)
+    moduleBody :: Body ModuleSection
+  }
+  deriving (Show)
+
+data ModuleSection = ModuleSection
+  { sectionLocal :: [VarDecl],
+    sectionBody :: NonEmpty Expr
   }
   deriving (Show)
 
@@ -132,15 +132,9 @@ getVarName (WireDecl _ n) = n
 toIdent :: ModuleControl VarDecl -> ModuleControl Ident
 toIdent ModuleControl {clockVar, initVar} = ModuleControl (getVarName clockVar) (getVarName initVar)
 
-prettyVarSize :: VarSize -> Maybe (Doc ann)
-prettyVarSize (FixedSize (BVSize 1)) = Nothing
-prettyVarSize (FixedSize (BVSize size)) = Just . brackets $ unsafeViaShow (size - 1) <> ":0"
-prettyVarSize (VariableSize size) = Just . brackets $ pretty size <> "-1:0"
-prettyVarSize (DeltaSize fstIndex sndIndex) = Just . brackets $ "(" <> pretty sndIndex <> "-" <> pretty fstIndex <> ":0"
-prettyVarSize (SumSize x y) = Just . brackets $ "(" <> pretty x <> "+" <> pretty y <> ")-1:0"
-
-prettyVarDecl :: VarSize -> Ident -> Doc ann
+prettyVarDecl :: Size -> Ident -> Doc ann
 prettyVarDecl size name =
-  case prettyVarSize size of
-    Nothing -> pretty name
-    Just pp -> pp <+> pretty name
+  let upBound = subSize size $ constantSize 1
+   in if isNull upBound
+        then pretty name
+        else "[" <> pretty upBound <> ":0]" <+> pretty name

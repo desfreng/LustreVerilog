@@ -1,0 +1,4 @@
+packages: .
+
+ignore-project: False
+profiling: False

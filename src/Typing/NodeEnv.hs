@@ -1,105 +1,89 @@
-{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TupleSections #-}
 
 module Typing.NodeEnv
   ( NodeEnv (),
-    addNode,
+    NodeMapping,
+    registerNode,
     runNodeEnv,
     toNodeEnv,
   )
 where
 
-import Commons.Ast
-import Commons.Ids
-import Commons.Position
-import Commons.TypingError
-import Control.Monad.Except
-import Control.Monad.Reader
-import Control.Monad.State.Strict
-import Control.Monad.Writer
-import Data.Either
-import Data.Foldable
-import Data.Functor
+import Commons.Ast (Ast (..), Body, Node (..), NodeBody (..), NodeSignature (..))
+import Commons.Error (CanFail, addError, collapse, reportError)
+import Commons.Ids (Ident, NodeIdent (..), VarId (..), VarIdent (..))
+import Commons.Position (Pos (..))
+import Control.Monad.Except (Except, MonadError (..), runExcept)
+import Control.Monad.Reader (ReaderT (runReaderT), asks)
+import Control.Monad.State.Strict (MonadState (..), StateT (..), evalStateT, execStateT, gets, modify)
+import Control.Monad.Writer (MonadWriter (tell), Writer, runWriter)
+import Data.Either (rights)
+import Data.Foldable (Foldable (toList))
 import qualified Data.List as List
 import Data.Map (Map)
-import Data.Map.Lazy ((!))
 import qualified Data.Map.Lazy as Map
+import Data.Maybe (fromMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Typing.Ast
-import Typing.Environments
+import Typing.Ast (TAst, TBody, TEquation (..), TExpr (..), TNode)
 
 type NodeWriter = CanFail [(NodeIdent, TNode)]
 
-newtype NodeEnv a = NodeEnv (StateT NodeMapping (Writer NodeWriter) a)
+type NodeMapping = Map NodeIdent (CanFail NodeSignature)
 
-instance Functor NodeEnv where
-  fmap :: (a -> b) -> NodeEnv a -> NodeEnv b
-  fmap f (NodeEnv m) = NodeEnv $ f <$> m
+newtype NodeEnv a
+  = NodeEnv
+      ( StateT
+          (Map NodeIdent (CanFail NodeSignature, Pos Ident))
+          (Writer NodeWriter)
+          a
+      )
+  deriving (Functor, Applicative, Monad)
 
-instance Applicative NodeEnv where
-  pure :: a -> NodeEnv a
-  pure = NodeEnv . pure
-
-  (<*>) :: NodeEnv (a -> b) -> NodeEnv a -> NodeEnv b
-  (<*>) (NodeEnv f) (NodeEnv arg) = NodeEnv $ f <*> arg
-
-instance Monad NodeEnv where
-  (>>=) :: NodeEnv a -> (a -> NodeEnv b) -> NodeEnv b
-  (>>=) (NodeEnv m) f = NodeEnv $ m >>= unwrapM . f
-    where
-      unwrapM (NodeEnv x) = x
-
-addNode :: Pos Ident -> CanFail TNode -> NodeEnv ()
-addNode nName nNode =
+registerNode :: Pos Ident -> CanFail NodeSignature -> NodeEnv (CanFail NodeIdent, CanFail (Body TBody) -> NodeEnv ())
+registerNode nName nSig =
   let nodeId = NodeIdent $ unwrap nName
-   in do
-        nMap <- NodeEnv get
+   in NodeEnv . state $ \nMap ->
         case Map.lookup nodeId nMap of
-          Just _ -> writeError $ "Node " <> show nName <> " is already declared."
-          Nothing -> addNodeMapping nodeId nMap >> writeNode nodeId
+          Just _ ->
+            let err = addError nSig nName $ "Node " <> show nName <> " is already declared."
+             in ((err, const $ return ()), nMap)
+          Nothing -> do
+            -- We register the node
+            ((pure nodeId, addNode nodeId), Map.insert nodeId (nSig, nName) nMap)
   where
-    writeError err = NodeEnv . tell $ addError nNode nName err
-    addNodeMapping nId nMap = NodeEnv . put $ Map.insert nId (buildSig <$> nNode) nMap
-    writeNode nId =
-      let vNode = collapse $ validateNode nName <$> nNode
-       in NodeEnv . tell $ List.singleton . (,) nId <$> vNode
+    addNode :: NodeIdent -> CanFail (Body TBody) -> NodeEnv ()
+    addNode nId nBody = do
+      let newN = Node <$> nSig <*> nBody
+      let vNode = collapse $ validateNode nName <$> newN
+      NodeEnv $ tell $ List.singleton . (nId,) <$> vNode
 
-    buildSig :: TNode -> NodeSignature
-    buildSig (Node n _) =
-      let varTyp = nodeVarTypes n
-          buildInput varIn = (varIn, varTyp ! FromIdent varIn)
-          inputTyp = buildInput <$> nodeInput n
-          outputTyp = (!) varTyp . FromIdent <$> nodeOutput n
-       in NodeSignature (length inputTyp) inputTyp outputTyp
+toNodeEnv :: (NodeMapping -> a) -> NodeEnv a
+toNodeEnv f = NodeEnv . gets $ f . fmap fst
 
 runNodeEnv :: NodeEnv () -> CanFail TAst
 runNodeEnv (NodeEnv m) =
-  let (((), s), w) = runWriter $ runStateT m Map.empty in Ast <$> sequenceA s <*> w
-
-toNodeEnv :: (NodeMapping -> a) -> NodeEnv a
-toNodeEnv = NodeEnv . gets
+  let (s, w) = runWriter $ execStateT m Map.empty
+   in Ast <$> traverse fst s <*> w
 
 validateNode :: Pos a -> TNode -> CanFail TNode
 validateNode loc node =
-  let defError = checkVarDef loc node
-      finalErr = collapse $ const (checkCausality loc node) <$> defError
-   in finalErr $> node
+  const node <$ checkVarDef loc node <*> checkCausality loc node
 
 varError :: Pos a -> String -> (String -> String) -> VarId -> CanFail b
 varError _ _ f (FromIdent var@(VarIdent vLoc)) = reportError vLoc . f $ show var
 varError loc errId _ var = reportError loc $ "Unknown Typing error (" <> errId <> " " <> show var <> ")"
 
-declVars :: NodeContext VarId -> Set VarId
-declVars NodeContext {nodeOutput, nodeLocal} =
-  let outSet = Set.fromList $ FromIdent <$> toList nodeOutput
-   in outSet `Set.union` nodeLocal
-
 checkVarDef :: Pos a -> TNode -> CanFail ()
-checkVarDef loc (Node nCtx eqs) =
-  let definedVars = foldMap defVar eqs
-      declaredVars = declVars nCtx
+checkVarDef loc (Node nSig nBody) =
+  foldMap (checkVarDefInBody loc nSig) nBody
+
+checkVarDefInBody :: Pos a -> NodeSignature -> TBody -> CanFail ()
+checkVarDefInBody loc nSig (NodeBody locVars eqs) =
+  let definedVars = foldMap defVar eqs <> Set.fromList (FromIdent . fst <$> inputTypes nSig)
+      declaredVars = Map.keysSet locVars
       noDefVar = Set.difference declaredVars definedVars
    in if Set.null noDefVar
         then pure ()
@@ -107,7 +91,7 @@ checkVarDef loc (Node nCtx eqs) =
   where
     defVar (SimpleTEq x _) = Set.singleton x
     defVar (FbyTEq x _ _) = Set.singleton x
-    defVar (CallTEq l _ _) = Set.fromList $ toList l
+    defVar (CallTEq l _ _ _) = Set.fromList $ toList l
 
     undefError = varError loc "Undef" $ \x -> "The variable " <> x <> " is not defined."
 
@@ -135,15 +119,18 @@ data DFSError = DFSError {var :: VarId, varCycle :: [VarId]}
 type DFS = ReaderT CausalityGraph (StateT DFSState (Except DFSError))
 
 checkCausality :: Pos a -> TNode -> CanFail ()
-checkCausality loc node@(Node nCtx _) =
-  let g = buildCausalityGraph node
-      s = DFSState {stack = mempty, varStatus = mempty}
-      res = runExcept (evalStateT (runReaderT doDFS g) s)
-   in case res of
-        Left err -> causalityError err
-        Right () -> pure ()
+checkCausality loc (Node nSig bodies) =
+  foldMap checkBody bodies
   where
-    doDFS = mapM_ dfs $ FromIdent <$> nodeOutput nCtx
+    checkBody b =
+      let g = buildCausalityGraph b
+          s = DFSState {stack = mempty, varStatus = mempty}
+          res = runExcept (evalStateT (runReaderT doDFS g) s)
+       in case res of
+            Left err -> causalityError err
+            Right () -> pure ()
+
+    doDFS = mapM_ dfs $ FromIdent . fst <$> outputTypes nSig
     causalityError DFSError {var, varCycle} =
       varError
         loc
@@ -151,13 +138,13 @@ checkCausality loc node@(Node nCtx _) =
         (\x -> "This use of the variable " <> x <> " form a cycle: " <> show varCycle <> ".")
         var
 
-buildCausalityGraph :: TNode -> CausalityGraph
-buildCausalityGraph (Node _ eqs) =
-  foldMap go eqs
+buildCausalityGraph :: TBody -> CausalityGraph
+buildCausalityGraph (NodeBody {bodyEqs}) =
+  foldMap go bodyEqs
   where
     go (SimpleTEq v expr) = Map.singleton v (freeVars expr)
     go (FbyTEq x initE _) = Map.singleton x (freeVars initE)
-    go (CallTEq l _ args) =
+    go (CallTEq l _ _ args) =
       let argsDeps = Set.fromList $ rights args
        in Map.fromList $ (,argsDeps) <$> toList l
 
@@ -168,7 +155,7 @@ dfs v = do
     Nothing ->
       pushToStack v
         >> markAs InProcess
-        >> asks (maybe Set.empty id . Map.lookup v)
+        >> asks (fromMaybe Set.empty . Map.lookup v)
         >>= mapM_ dfs
         >> markAs Done
         >> popFromStack
@@ -176,7 +163,7 @@ dfs v = do
     Just Done -> return ()
   where
     pushToStack :: VarId -> DFS ()
-    pushToStack x = modify $ \s -> s {stack = x : (stack s)}
+    pushToStack x = modify $ \s -> s {stack = x : stack s}
 
     popFromStack :: DFS ()
     popFromStack = modify $ \s -> s {stack = drop 1 (stack s)}

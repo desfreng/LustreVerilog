@@ -3,9 +3,10 @@
 
 module Typing.Ast where
 
-import Commons.Ast (Ast, BinOp, Constant, Node, UnOp)
+import Commons.Ast (Ast, BinOp, Constant, Node, NodeBody, UnOp)
 import Commons.Ids (NodeIdent, VarId)
-import Commons.Types (AtomicTType, BVSize)
+import Commons.Size (Size)
+import Commons.Types (AtomicTType)
 import Data.Bifunctor (Bifunctor (first, second))
 import Data.Bitraversable (Bitraversable (bitraverse))
 import Data.Either (lefts)
@@ -24,13 +25,18 @@ data TExpr atyp
   | -- | A Binary Expression: @a + b@, @a <> b@, @a and b@, ...
     BinOpTExpr BinOp (TExpr atyp) (TExpr atyp) atyp
   | -- | Conditional Expression: @if c then a else b@
-    IfTExpr {ifCond :: VarId, ifTrue :: (TExpr atyp), ifFalse :: (TExpr atyp), ifTyp :: atyp}
+    IfTExpr
+      { ifCond :: VarId,
+        ifTrue :: TExpr atyp,
+        ifFalse :: TExpr atyp,
+        ifTyp :: atyp
+      }
   | -- | Concat Expression: @a ++ b@
     ConcatTExpr (TExpr atyp) (TExpr atyp) atyp
   | -- | Slice Expression: @a[1:3]@
-    SliceTExpr (TExpr atyp) (BVSize, BVSize) atyp
+    SliceTExpr (TExpr atyp) (Size, Size) atyp
   | -- | Select Expression: @a[1]@
-    SelectTExpr (TExpr atyp) BVSize atyp
+    SelectTExpr (TExpr atyp) Size atyp
   | -- | Convert a BitVector to another type
     ConvertTExpr (TExpr atyp) atyp
   deriving (Show)
@@ -40,13 +46,15 @@ data TEquation atyp
     SimpleTEq VarId (TExpr atyp)
   | -- | A delayed expression: @x = init -> next@
     FbyTEq VarId (TExpr atyp) (TExpr atyp)
-  | -- | A call to another node : @(x, ..., z) = f(a, ..., b)@
-    CallTEq (NonEmpty VarId) NodeIdent [Either (TConstant atyp) VarId]
+  | -- | A call to another node : @(x, ..., z) = f[N, ..., M](a, ..., b)@
+    CallTEq (NonEmpty VarId) NodeIdent [Size] [Either (TConstant atyp) VarId]
   deriving (Show)
 
 type TNodeEq = TEquation AtomicTType
 
-type TNode = Node VarId TNodeEq
+type TBody = NodeBody VarId TNodeEq
+
+type TNode = Node TBody
 
 type TAst = Ast TNode
 
@@ -94,16 +102,16 @@ instance Foldable TEquation where
   foldMap :: (Monoid m) => (a -> m) -> TEquation a -> m
   foldMap f (SimpleTEq _ e) = foldMap f e
   foldMap f (FbyTEq _ initE nextE) = foldMap f initE <> foldMap f nextE
-  foldMap f (CallTEq _ _ l) = foldMap (f . snd) $ lefts l
+  foldMap f (CallTEq _ _ _ l) = foldMap (f . snd) $ lefts l
 
 instance Functor TEquation where
   fmap :: (a -> b) -> TEquation a -> TEquation b
   fmap f (SimpleTEq v e) = SimpleTEq v $ fmap f e
   fmap f (FbyTEq v initE nextE) = FbyTEq v (fmap f initE) (fmap f nextE)
-  fmap f (CallTEq vars node e) = CallTEq vars node $ fmap (first $ second f) e
+  fmap f (CallTEq vars node sizeArgs e) = CallTEq vars node sizeArgs $ fmap (first $ second f) e
 
 instance Traversable TEquation where
   traverse :: (Applicative f) => (a -> f b) -> TEquation a -> f (TEquation b)
   traverse f (SimpleTEq v e) = SimpleTEq v <$> traverse f e
   traverse f (FbyTEq v initE nextE) = FbyTEq v <$> traverse f initE <*> traverse f nextE
-  traverse f (CallTEq vars node e) = CallTEq vars node <$> traverse (bitraverse (bitraverse pure f) pure) e
+  traverse f (CallTEq vars node sizeArgs e) = CallTEq vars node sizeArgs <$> traverse (bitraverse (bitraverse pure f) pure) e

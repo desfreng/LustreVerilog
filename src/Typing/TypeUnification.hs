@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -9,6 +10,7 @@ module Typing.TypeUnification
     runUnifier,
     unifyTypeCand,
     showTypeCand,
+    getSize,
     getFixedSize,
     -- TypeCand
     TypeCand (),
@@ -24,16 +26,25 @@ module Typing.TypeUnification
     expectBool,
     -- ExpectedType
     fromType,
+    -- Size Comparision
+    isStrictlySmaller,
+    isSmaller,
+    isEqual,
+    compareSize,
+    checkSizeExpr,
+    checkSizeInDecl,
+    checkSizeConstraint,
+    SystemResult,
+    solveSystem,
   )
 where
 
-import Commons.Ast (Constant (..))
-import Commons.Ids (TypeIdent)
-import Commons.Position
-import Commons.Types (AtomicTType (..), BVSize (..), BitVectorKind (..))
-import Commons.TypingError (CanFail, embed, reportError)
-import qualified Control.Monad as Monad
-import Control.Monad.Reader (Reader, runReader)
+import Commons.Ast (Constant (..), NodeSignature, SizeConstraint)
+import Commons.Error (CanFail, embed, reportError)
+import Commons.Position (Pos)
+import Commons.Size (Size, constantSize)
+import Commons.Types (AtomicTType (..), BitVectorKind (..))
+import Control.Monad.Reader (Reader, ReaderT, runReader, runReaderT)
 import Control.Monad.State.Strict (MonadState (state), State, runState)
 import Data.Bifunctor (Bifunctor (second))
 import Data.Foldable (find)
@@ -45,43 +56,64 @@ import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Maybe
-import Data.Monoid
+import Data.Maybe (mapMaybe)
+import Data.Monoid (Ap (Ap, getAp))
+import Data.RatioInt ((%))
 import Data.String (IsString (..))
+import Parsing.Ast (SizeExpr)
 import Typing.MonadUnif (ConvertibleToInt (..), MonadAssocReader (..), MonadUnif (..), UnifState, emptyState)
+import Typing.SizeEnv (SizeInfo, SystemResult)
+import qualified Typing.SizeEnv as S
 
-newtype UnsignedSize = UnSig BVSize
-  deriving (Show, Eq, Ord)
+{-# INLINEABLE ifM #-}
+ifM :: (Monad m) => m Bool -> m a -> m a -> m a
+ifM b t f = do bb <- b; if bb then t else f
 
-newtype SignedSize = Sig BVSize
-  deriving (Show, Eq, Ord)
+findM :: (Foldable f, Monad m) => (a -> m Bool) -> f a -> m (Maybe a)
+findM p = foldr (\x -> ifM (p x) (pure $ Just x)) (pure Nothing)
+
+foldMapM :: (Foldable t, Applicative f, Monoid b) => (a -> f b) -> t a -> f b
+foldMapM f = getAp <$> foldMap (Ap . f)
+
+newtype UnsignedSize = UnSig Int
+  deriving (Eq, Ord)
+
+newtype SignedSize = Sig Int
+  deriving (Eq, Ord)
 
 data TypeKind
-  = BitVector BitVectorKind BVSize
+  = BitVector BitVectorKind Size
   | Numeric (NonEmpty BitVectorKind) UnsignedSize SignedSize
   | Bool
-  | Custom TypeIdent [TypeCand]
 
 showNumeric :: NonEmpty BitVectorKind -> UnsignedSize -> SignedSize -> String
 showNumeric numKind uS sS = intercalate "|" . NonEmpty.toList $ showNumKind uS sS <$> numKind
   where
-    showNumKind (UnSig (BVSize s)) _ Raw = "r(>=" <> show s <> ")"
-    showNumKind (UnSig (BVSize s)) _ Unsigned = "u(>=" <> show s <> ")"
-    showNumKind _ (Sig (BVSize s)) Signed = "i(>=" <> show s <> ")"
+    showNumKind :: UnsignedSize -> SignedSize -> BitVectorKind -> String
+    showNumKind (UnSig s) _ Raw = "r(>=" <> show s <> ")"
+    showNumKind (UnSig s) _ Unsigned = "u(>=" <> show s <> ")"
+    showNumKind _ (Sig s) Signed = "i(>=" <> show s <> ")"
 
-newtype TypeCand = TypeCand Int
-  deriving (Eq, Ord)
+data TypeCand = TypeCand Int String
+  deriving (Show)
+
+instance Eq TypeCand where
+  (==) :: TypeCand -> TypeCand -> Bool
+  (TypeCand x _) == (TypeCand y _) = x == y
+
+instance Ord TypeCand where
+  compare (TypeCand x _) (TypeCand y _) = compare x y
 
 instance Enum TypeCand where
   toEnum :: Int -> TypeCand
-  toEnum = TypeCand
+  toEnum i = TypeCand i ""
 
   fromEnum :: TypeCand -> Int
-  fromEnum (TypeCand i) = i
+  fromEnum (TypeCand i _) = i
 
 instance ConvertibleToInt TypeCand where
   toInt :: TypeCand -> Int
-  toInt (TypeCand i) = i
+  toInt (TypeCand i _) = i
 
 data ExpectedKind = BoolExp | UnsizedBitVector BitVectorKind
   deriving (Eq)
@@ -112,26 +144,10 @@ instance Show ExpectedType where
 
 type StateUnifier = UnifState TypeCand TypeKind
 
-data UState = UState {unifState :: StateUnifier, nextId :: TypeCand, typCandPos :: IntMap (Pos ())}
+data UState = UState {unifState :: StateUnifier, nextId :: Int, typCandPos :: IntMap (Pos ())}
 
-newtype TypeUnifier a = TypeUnifier (State UState a)
-
-instance Functor TypeUnifier where
-  fmap :: (a -> b) -> TypeUnifier a -> TypeUnifier b
-  fmap f (TypeUnifier m) = TypeUnifier $ f <$> m
-
-instance Applicative TypeUnifier where
-  pure :: a -> TypeUnifier a
-  pure = TypeUnifier . pure
-
-  (<*>) :: TypeUnifier (a -> b) -> TypeUnifier a -> TypeUnifier b
-  (<*>) (TypeUnifier f) (TypeUnifier arg) = TypeUnifier $ f <*> arg
-
-instance Monad TypeUnifier where
-  (>>=) :: TypeUnifier a -> (a -> TypeUnifier b) -> TypeUnifier b
-  (>>=) (TypeUnifier m) f = TypeUnifier $ m >>= unwrapM . f
-    where
-      unwrapM (TypeUnifier x) = x
+newtype TypeUnifier a = TypeUnifier (ReaderT SizeInfo (State UState) a)
+  deriving (Functor, Applicative, Monad)
 
 instance (Semigroup a) => Semigroup (TypeUnifier a) where
   (<>) :: TypeUnifier a -> TypeUnifier a -> TypeUnifier a
@@ -151,7 +167,6 @@ instance MonadUnif TypeCand TypeKind TypeUnifier where
   subVars Bool = []
   subVars BitVector {} = []
   subVars Numeric {} = []
-  subVars (Custom _ l) = l
 
   {-# INLINEABLE idName #-}
   idName :: TypeUnifier String
@@ -160,66 +175,64 @@ instance MonadUnif TypeCand TypeKind TypeUnifier where
   showId :: TypeCand -> TypeUnifier String
   showId t = unfoldVal t >>= go
     where
+      go :: Maybe TypeKind -> TypeUnifier String
       go Nothing = return "?"
       go (Just x) = showAtom' x
 
+      showAtom' :: TypeKind -> TypeUnifier String
       showAtom' Bool = return "bool"
-      showAtom' (BitVector Raw (BVSize i)) = return $ "r" <> show i
-      showAtom' (BitVector Unsigned (BVSize i)) = return $ "u" <> show i
-      showAtom' (BitVector Signed (BVSize i)) = return $ "i" <> show i
+      showAtom' (BitVector k s) = return $ show (TBitVector k s)
       showAtom' (Numeric numKind uS sS) = return $ showNumeric numKind uS sS
-      showAtom' (Custom x l) = do
-        lStr <- mapM showId l
-        let lStrParens s = "(" <> s <> ")"
-            customStr = show x
-         in return $ "Custom " <> customStr <> " " <> unwords (lStrParens <$> lStr)
 
   unifyCand ::
     Pos a -> (TypeCand, TypeKind) -> (TypeCand, TypeKind) -> TypeUnifier (CanFail TypeKind)
-  unifyCand err (r1, t1) (r2, t2) =
+  unifyCand err (r1@(TypeCand _ ctx1), t1) (r2@(TypeCand _ ctx2), t2) =
     case (t1, t2) of
       -- Bool
       (Bool, Bool) -> return $ pure Bool
+      (Bool, BitVector Raw s) -> unifyBoolRaw s
       (Bool, BitVector {}) -> reportErr
       (Bool, Numeric {}) -> reportErr
-      (Bool, Custom {}) -> reportErr
       -- BitVector
+      (BitVector Raw s, Bool) -> unifyBoolRaw s
       (BitVector {}, Bool) -> reportErr
       (BitVector kind1 size1, BitVector kind2 size2) -> unifyBV kind1 kind2 size1 size2
       (BitVector kind size, Numeric numKind minUSize minSSize) -> unifyBVNum kind size numKind minUSize minSSize
-      (BitVector {}, Custom {}) -> reportErr
       -- Numeric
       (Numeric {}, Bool) -> reportErr
       (Numeric k1 uS1 sS1, Numeric k2 uS2 sS2) -> unifyNumNum k1 uS1 sS1 k2 uS2 sS2
       (Numeric numKind minUSize minSSize, BitVector kind size) -> unifyBVNum kind size numKind minUSize minSSize
-      (Numeric {}, Custom {}) -> reportErr
-      -- Custom
-      (Custom {}, Bool) -> reportErr
-      (Custom {}, BitVector {}) -> reportErr
-      (Custom {}, Numeric {}) -> reportErr
-      (Custom tId1 args1, Custom tId2 args2) -> unifyCustom tId1 tId2 args1 args2
     where
-      reportErr = reportError err <$> "Cannot unify atomic type " <> showId r1 <> " with " <> showId r2 <> "."
+      reportErr :: TypeUnifier (CanFail a)
+      reportErr =
+        let c1 = if ctx1 /= "" then "\nContext for " <> showId r1 <> ": " <> pure ctx1 else ""
+            c2 = if ctx2 /= "" then "\nContext for " <> showId r2 <> ": " <> pure ctx2 else ""
+         in reportError err <$> "Cannot unify atomic type " <> showId r1 <> " with " <> showId r2 <> "." <> c1 <> c2
 
-      unifyBV kind1 kind2 size1 size2 =
-        if kind1 == kind2 && size1 == size2
+      unifyBV :: BitVectorKind -> BitVectorKind -> Size -> Size -> TypeUnifier (CanFail TypeKind)
+      unifyBV kind1 kind2 size1 size2 = do
+        isEq <- size1 `isEqual` size2
+        if kind1 == kind2 && isEq
           then return $ pure t1
           else reportErr
 
-      unifyBVNum kind size numKind minUSize minSSize =
-        if kind `elem` numKind && isSizeCompatible size kind minUSize minSSize
+      unifyBoolRaw :: Size -> TypeUnifier (CanFail TypeKind)
+      unifyBoolRaw s = do
+        isEq <- s `isEqual` constantSize 1
+        if isEq then return $ pure Bool else reportErr
+
+      unifyBVNum :: BitVectorKind -> Size -> NonEmpty BitVectorKind -> UnsignedSize -> SignedSize -> TypeUnifier (CanFail TypeKind)
+      unifyBVNum kind size numKind minUSize minSSize = do
+        isGood <- isSizeCompatible size kind minUSize minSSize
+        if kind `elem` numKind && isGood
           then return $ pure (BitVector kind size)
           else reportErr
 
+      unifyNumNum :: NonEmpty BitVectorKind -> UnsignedSize -> SignedSize -> NonEmpty BitVectorKind -> UnsignedSize -> SignedSize -> TypeUnifier (CanFail TypeKind)
       unifyNumNum k1 uS1 sS1 k2 uS2 sS2 =
         case filterKind k1 (NonEmpty.toList k2) of
           Just k -> return . pure $ Numeric k (max uS1 uS2) (max sS1 sS2)
           Nothing -> reportErr
-
-      unifyCustom tId1 tId2 args1 args2 =
-        if tId1 == tId2
-          then fmap (Custom tId1) . sequenceA <$> Monad.zipWithM (unify err) args1 args2
-          else reportErr
 
 unifyTypeCand :: Pos a -> TypeCand -> TypeCand -> TypeUnifier (CanFail TypeCand)
 unifyTypeCand = unify
@@ -230,31 +243,66 @@ showTypeCand = showId
 filterKind :: NonEmpty BitVectorKind -> [BitVectorKind] -> Maybe (NonEmpty BitVectorKind)
 filterKind l1 l2 = NonEmpty.nonEmpty (NonEmpty.toList l1 `intersect` l2)
 
-isSizeCompatible :: BVSize -> BitVectorKind -> UnsignedSize -> SignedSize -> Bool
-isSizeCompatible size Raw (UnSig minSize) _ = size >= minSize
-isSizeCompatible size Unsigned (UnSig minSize) _ = size >= minSize
-isSizeCompatible size Signed _ (Sig minSize) = size >= minSize
+checkSizeExpr :: SizeExpr -> TypeUnifier (CanFail Size)
+checkSizeExpr e = TypeUnifier $ S.checkSizeExpr e
+
+checkSizeInDecl :: SizeExpr -> TypeUnifier (CanFail Size)
+checkSizeInDecl e = TypeUnifier $ S.checkSizeInDecl e
+
+-- | x `isStrictlySmaller` y checks that x < y
+isStrictlySmaller :: Size -> Size -> TypeUnifier Bool
+isStrictlySmaller x y = TypeUnifier $ S.isStrictlySmaller x y
+
+-- | x `isSmaller` y checks that x <= y
+isSmaller :: Size -> Size -> TypeUnifier Bool
+isSmaller x y = TypeUnifier $ S.isSmaller x y
+
+isEqual :: Size -> Size -> TypeUnifier Bool
+isEqual x y = TypeUnifier $ (Just EQ ==) <$> S.compareSize x y
+
+compareSize :: Size -> Size -> TypeUnifier (Maybe Ordering)
+compareSize x y = TypeUnifier $ S.compareSize x y
+
+checkSizeConstraint :: SizeConstraint Size -> TypeUnifier Bool
+checkSizeConstraint = TypeUnifier . S.checkSizeConstraint
+
+solveSystem :: Pos a -> NodeSignature -> [Pos (Size, Size)] -> TypeUnifier (CanFail SystemResult)
+solveSystem loc nSig = TypeUnifier . S.solveSystem loc nSig
+
+isSizeCompatible :: Size -> BitVectorKind -> UnsignedSize -> SignedSize -> TypeUnifier Bool
+isSizeCompatible size Raw (UnSig minSize) _ = constantSize (minSize % 1) `isSmaller` size
+isSizeCompatible size Unsigned (UnSig minSize) _ = constantSize (minSize % 1) `isSmaller` size
+isSizeCompatible size Signed _ (Sig minSize) = constantSize (minSize % 1) `isSmaller` size
 
 checkExpectedList :: Pos a -> ExpectedList -> TypeCand -> TypeUnifier (CanFail TypeCand)
-checkExpectedList err expL@(ExpectedList l) x = do
+checkExpectedList err expL@(ExpectedList l) x@(TypeCand _ ctx) = do
   v <- unfoldVal x
   case v of
-    Nothing -> reportError err <$> "Type variable " <> showId x <> " is not " <> pure (show expL) <> "."
-    Just k ->
-      case checkAtom k of
-        Nothing -> reportError err <$> "Unable to unify " <> showId x <> " with " <> pure (show expL) <> "."
+    Nothing ->
+      let c = if ctx /= "" then "\nContext for " <> showId x <> ": " <> pure ctx else ""
+       in reportError err <$> "Type variable " <> showId x <> " is not " <> pure (show expL) <> "." <> c
+    Just k -> do
+      res <- checkAtom k
+      case res of
+        Nothing ->
+          let c = if ctx /= "" then "\nContext for " <> showId x <> ": " <> pure ctx else ""
+           in reportError err <$> "Unable to unify " <> showId x <> " with " <> pure (show expL) <> "." <> c
         Just k' -> pure <$> setVal x k'
   where
-    checkAtom v@Bool = find (== BoolExp) l $> v
-    checkAtom v@(BitVector kind size) = find (isCompatibleBitVector kind size) l $> v
+    checkAtom :: TypeKind -> TypeUnifier (Maybe TypeKind)
+    checkAtom v@Bool = return $ find (== BoolExp) l $> v
+    checkAtom v@(BitVector kind size) = do
+      res <- findM (isCompatibleBitVector kind size) l
+      return $ res $> v
     checkAtom (Numeric nK uS sS) =
       let buildNumeric u s k = Numeric k u s
-       in buildNumeric uS sS <$> filterKind nK (mapMaybe getBitVectorKind (NonEmpty.toList l))
-    checkAtom (Custom {}) = Nothing
+       in return $ buildNumeric uS sS <$> filterKind nK (mapMaybe getBitVectorKind (NonEmpty.toList l))
 
-    isCompatibleBitVector _ _ BoolExp = False
-    isCompatibleBitVector kind _ (UnsizedBitVector expKind) = kind == expKind
+    isCompatibleBitVector :: BitVectorKind -> Size -> ExpectedKind -> TypeUnifier Bool
+    isCompatibleBitVector _ s BoolExp = s `isEqual` constantSize 1
+    isCompatibleBitVector kind _ (UnsizedBitVector expKind) = return $ kind == expKind
 
+    getBitVectorKind :: ExpectedKind -> Maybe BitVectorKind
     getBitVectorKind BoolExp = Nothing
     getBitVectorKind (UnsizedBitVector k) = Just k
 
@@ -262,74 +310,85 @@ checkExpectedType :: Pos a -> AtomicTType -> TypeCand -> TypeUnifier (CanFail Ty
 checkExpectedType err typ t = do
   v <- unfoldVal t
   case v of
-    Nothing -> fromAtomicType err typ >>= (t ~>)
+    Nothing -> fromAtomicType err "" typ >>= (t ~>)
     Just k -> checkExpectedType' t typ k >>= embed . fmap (setVal t)
   where
-    reportErr r = reportError err <$> "Cannot unify atomic type " <> showId r <> " with " <> pure (show typ) <> "."
+    reportErr :: TypeCand -> TypeUnifier (CanFail a)
+    reportErr r@(TypeCand _ ctx) =
+      let c = if ctx /= "" then "\nContext for " <> showId r <> ": " <> pure ctx else ""
+       in reportError err <$> "Cannot unify atomic type " <> showId r <> " with " <> pure (show typ) <> "." <> c
 
+    checkExpectedType' :: TypeCand -> AtomicTType -> TypeKind -> TypeUnifier (CanFail TypeKind)
     checkExpectedType' r ty k =
       case (ty, k) of
         -- TBool
         (TBool, Bool) -> return $ pure Bool
+        (TBool, BitVector Raw s) -> unifyBoolRaw s r
         (TBool, BitVector {}) -> reportErr r
         (TBool, Numeric {}) -> reportErr r
-        (TBool, Custom {}) -> reportErr r
         -- TBitVector
+        (TBitVector Raw s, Bool) -> unifyBoolRaw s r
         (TBitVector {}, Bool) -> reportErr r
         (TBitVector typKind typSize, BitVector candKind candSize) -> unifyBV r typKind typSize candKind candSize
         (TBitVector typKind typSize, Numeric numKind uS sS) -> unifyBVNum r typKind typSize numKind uS sS
-        (TBitVector {}, Custom {}) -> reportErr r
-        -- TCustom
-        (TCustom {}, BitVector {}) -> reportErr r
-        (TCustom {}, Numeric {}) -> reportErr r
-        (TCustom {}, Bool) -> reportErr r
-        (TCustom tId1 args1, Custom tId2 args2) -> unifyCustom r tId1 args1 tId2 args2
 
+    unifyBoolRaw :: Size -> TypeCand -> TypeUnifier (CanFail TypeKind)
+    unifyBoolRaw s r = do
+      isEq <- s `isEqual` constantSize 1
+      if isEq then return $ pure Bool else reportErr r
+
+    unifyBV :: TypeCand -> BitVectorKind -> Size -> BitVectorKind -> Size -> TypeUnifier (CanFail TypeKind)
     unifyBV r typKind typSize candKind candSize =
-      if typKind == candKind && typSize == candSize
+      do
+        eqSize <- typSize `isEqual` candSize
+        if typKind == candKind && eqSize
+          then return $ pure (BitVector typKind typSize)
+          else reportErr r
+
+    unifyBVNum :: TypeCand -> BitVectorKind -> Size -> NonEmpty BitVectorKind -> UnsignedSize -> SignedSize -> TypeUnifier (CanFail TypeKind)
+    unifyBVNum r typKind typSize numKind uS sS = do
+      isGood <- isSizeCompatible typSize typKind uS sS
+      if typKind `elem` numKind && isGood
         then return $ pure (BitVector typKind typSize)
         else reportErr r
 
-    unifyBVNum r typKind typSize numKind uS sS =
-      if typKind `elem` numKind && isSizeCompatible typSize typKind uS sS
-        then return $ pure (BitVector typKind typSize)
-        else reportErr r
-
-    unifyCustom r tId1 args1 tId2 args2 =
-      if tId1 == tId2
-        then fmap (Custom tId1) . sequenceA <$> Monad.zipWithM (checkExpectedType err) args1 args2
-        else reportErr r
-
-getFixedSize :: Pos a -> TypeCand -> TypeUnifier (CanFail BVSize)
-getFixedSize err t = do
+getSize :: TypeCand -> TypeUnifier (Either TypeCand Size)
+getSize t = do
   v <- unfoldVal t
   case v of
-    Nothing -> reportErr
-    Just (BitVector _ x) -> return $ pure x
-    Just (Bool) -> return . pure $ BVSize 1
-    Just (Numeric _ _ _) -> reportErr
-    Just (Custom _ _) -> reportErr
+    Nothing -> return $ Left t
+    Just (BitVector _ x) -> return $ Right x
+    Just Bool -> return $ Right $ constantSize 1
+    Just (Numeric {}) -> return $ Left t
+
+getFixedSize :: Pos a -> TypeCand -> TypeUnifier (CanFail Size)
+getFixedSize err t = do
+  s <- getSize t
+  case s of
+    Left _ -> reportErr
+    Right res -> return $ pure res
   where
+    reportErr :: TypeUnifier (CanFail a)
     reportErr = reportError err <$> "The type candidate " <> showId t <> " does not have a fixed size."
 
 checkExpected :: Pos a -> ExpectedType -> TypeCand -> TypeUnifier (CanFail TypeCand)
 checkExpected loc (EList expL) = checkExpectedList loc expL
 checkExpected loc (EType eTyp) = checkExpectedType loc eTyp
 
-buildAndBind :: Pos a -> TypeKind -> TypeUnifier TypeCand
-buildAndBind loc v = do
+buildAndBind :: Pos a -> String -> TypeKind -> TypeUnifier TypeCand
+buildAndBind loc ctx v = do
   vId <- TypeUnifier $ state mintNewCand
   setVal vId v
   where
+    mintNewCand :: UState -> (TypeCand, UState)
     mintNewCand s =
-      let cand@(TypeCand tInt) = nextId s
-          incrTypeCand (TypeCand i) = TypeCand (i + 1)
-          newNextId = incrTypeCand (nextId s)
+      let tInt = nextId s
+          newNextId = tInt + 1
           newTypCandPos = IntMap.insert tInt (loc $> ()) (typCandPos s)
-       in (cand, s {nextId = newNextId, typCandPos = newTypCandPos})
+       in (TypeCand tInt ctx, s {nextId = newNextId, typCandPos = newTypCandPos})
 
 constantTypeCand :: Pos a -> Constant -> TypeUnifier TypeCand
-constantTypeCand loc = buildAndBind loc . go
+constantTypeCand loc = buildAndBind loc "" . go
   where
     busSize :: Integer -> Int
     busSize 0 = 0
@@ -338,14 +397,13 @@ constantTypeCand loc = buildAndBind loc . go
     go (BoolConst _) = Bool
     go (IntegerConst i) =
       let log2 = fromEnum (busSize i)
-          minUSize = UnSig (BVSize (1 + log2))
-          minSSize = Sig (BVSize (2 + log2))
+          minUSize = UnSig (1 + log2)
+          minSSize = Sig (2 + log2)
        in Numeric (Raw :| [Unsigned, Signed]) minUSize minSSize
 
-fromAtomicType :: Pos a -> AtomicTType -> TypeUnifier TypeCand
-fromAtomicType loc TBool = buildAndBind loc Bool
-fromAtomicType loc (TBitVector kind size) = buildAndBind loc (BitVector kind size)
-fromAtomicType loc (TCustom tId args) = mapM (fromAtomicType loc) args >>= buildAndBind loc . Custom tId
+fromAtomicType :: Pos a -> String -> AtomicTType -> TypeUnifier TypeCand
+fromAtomicType loc ctx TBool = buildAndBind loc ctx Bool
+fromAtomicType loc ctx (TBitVector kind size) = buildAndBind loc ctx (BitVector kind size)
 
 toAtom :: ExpectedList -> ExpectedType
 toAtom = EList
@@ -361,30 +419,28 @@ expectBool = ExpectedList (NonEmpty.singleton BoolExp)
 
 instance MonadAssocReader TypeCand TypeKind (Reader StateUnifier)
 
-runUnifier :: TypeUnifier a -> (a, CanFail (Map TypeCand AtomicTType))
-runUnifier (TypeUnifier m) = second buildMap $ runState m initialState
+runUnifier :: SizeInfo -> TypeUnifier a -> (a, CanFail (Map TypeCand AtomicTType))
+runUnifier sInfo (TypeUnifier m) = second buildMap $ runState (runReaderT m sInfo) initialState
   where
-    initialState = UState {unifState = emptyState, nextId = TypeCand 0, typCandPos = mempty}
-
-foldMapM :: (Foldable t, Applicative f, Monoid b) => (a -> f b) -> t a -> f b
-foldMapM f = getAp <$> foldMap (Ap . f)
+    initialState :: UState
+    initialState = UState {unifState = emptyState, nextId = 0, typCandPos = mempty}
 
 buildMap :: UState -> CanFail (Map TypeCand AtomicTType)
 buildMap st =
-  let beg = TypeCand 0
-      (TypeCand nextInt) = nextId st
-      end = TypeCand $ nextInt - 1
+  let beg = TypeCand 0 ""
+      nextInt = nextId st
+      end = TypeCand (nextInt - 1) ""
    in sequenceA $ runReader (foldMapM go [beg .. end]) $ unifState st
   where
     go :: TypeCand -> Reader StateUnifier (Map TypeCand (CanFail AtomicTType))
     go t = getTyp t <&> Map.singleton t
 
     getTyp :: TypeCand -> Reader StateUnifier (CanFail AtomicTType)
-    getTyp t@(TypeCand tInt) =
+    getTyp t@(TypeCand tInt _) =
       let err = reportError ((IntMap.! tInt) (typCandPos st))
        in val t >>= maybe (return $ err "No type found for this expression.") (fromTypeKind err)
 
+    fromTypeKind :: (String -> CanFail AtomicTType) -> TypeKind -> Reader StateUnifier (CanFail AtomicTType)
     fromTypeKind _ Bool = return $ pure TBool
     fromTypeKind _ (BitVector kind size) = return $ pure (TBitVector kind size)
     fromTypeKind err (Numeric kind uS sS) = return . err $ "Unable to find the bit-vector size of this expression. Type: " <> showNumeric kind uS sS <> "."
-    fromTypeKind _ (Custom tId args) = fmap (TCustom tId) . sequenceA <$> mapM getTyp args

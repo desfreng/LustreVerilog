@@ -1,13 +1,8 @@
 module LustreVerilog
-  ( -- Error Handling
-    ShowErrorComponent (),
-    ParseErrorBundle (),
-    LustreVerilog.errorBundlePretty,
-    -- Parsing
+  ( -- Parsing
     PAst (),
     parseFile,
     -- Typing
-    TypingError (),
     TAst (),
     typeFile,
     -- Compilation
@@ -19,30 +14,27 @@ module LustreVerilog
   )
 where
 
-import Commons.TypingError (TypingError, runCanFail)
+import Commons.Error (runCanFail)
 import Compiling.Ast (CAst)
 import Compiling.ToVerilog (toVerilogAst)
 import Compiling.Transform (transformAst)
-import Control.Monad.Reader (runReader)
-import Data.Text.Lazy (Text)
-import Data.Void (Void)
+import Data.ByteString (ByteString)
+import Data.Text (Text)
 import Parsing.Ast (PAst)
-import Parsing.Parser (pFile)
-import safe Text.Megaparsec (ParseErrorBundle, ShowErrorComponent, runParserT)
-import qualified Text.Megaparsec.Error as MegaparsecError
+import Parsing.Grammar (parser)
+import Parsing.ParsingMonad (ParsingParam (..), runParsingMonad)
 import Typing.Ast (TAst)
 import Typing.TypeNode (typeAst)
 import Verilog.BaseLibrary (addRequirements)
 import Verilog.Verilog (ResetKind (..), toVerilogCode)
 
-errorBundlePretty :: (ShowErrorComponent e) => ParseErrorBundle Text e -> String
-errorBundlePretty = MegaparsecError.errorBundlePretty
+parseFile :: Int -> FilePath -> ByteString -> Either String PAst
+parseFile dIntSize file textData =
+  let p = ParsingParam dIntSize
+   in runCanFail file (runParsingMonad parser textData p)
 
-parseFile :: Int -> FilePath -> Text -> Either (ParseErrorBundle Text Void) PAst
-parseFile defaultIntSize file textData = runReader (runParserT pFile file textData) defaultIntSize
+typeFile :: FilePath -> PAst -> Either String TAst
+typeFile file ast = runCanFail file (typeAst ast)
 
-typeFile :: FilePath -> Text -> PAst -> Either (ParseErrorBundle Text TypingError) TAst
-typeFile file textData ast = runCanFail file textData (typeAst ast)
-
-toVerilog :: ResetKind -> Text -> CAst -> Maybe Text
+toVerilog :: ResetKind -> Text -> CAst -> Either String Text
 toVerilog rst mainModule = toVerilogCode rst mainModule . addRequirements . toVerilogAst
