@@ -158,13 +158,13 @@ The language supports standard primitives and explicit bit-sized integers:
 * **Logic:** `and`, `or`, `not`
 * **Comparison:** `==`, `<>`, `>=`, `<=`, `>`, `<`
 * **Temporal:**
-* `fby`: "Followed by" operator (e.g., `init fby next`).
+  * `fby`: "Followed by" operator (e.g., `init fby next`).
 
 
 * **Bitwise/Arrays:**
-* `++`: Concatenation.
-* `x[i]`: Indexing.
-* `x[i:j]`: Slicing/Range selection from `i` inclusive to `j` exclusive.
+  * `++`: Concatenation.
+  * `x[i]`: Indexing.
+  * `x[i:j]`: Slicing/Range selection from `i` inclusive to `j` exclusive.
 
 
 * **Type Casting:** `raw`, `signed`, `unsigned` (used as unary prefixes).
