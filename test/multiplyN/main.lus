@@ -1,0 +1,49 @@
+node shift_left(x: u<N>) returns (res: u<N + 1>);
+  size N
+  where N > 0;
+  var raw_res: r<N + 1>;
+  let
+    raw_res = raw x ++ false;
+    res = unsigned raw_res;
+  tel
+
+node add(x, y: u<N>) returns (res: u<N+1>);
+  size N
+  where N > 0;
+  var raw_res: r<N + 1>;
+      carry: bool;
+      raw_x, raw_y: r<N>;
+  let
+    raw_x = raw x;
+    raw_y = raw y;
+    carry = raw_x[N-1] and raw_y[N-1];
+    raw_res = carry ++ raw (x + y);
+    res = unsigned raw_res;
+  tel
+
+node mult_pipe(x: r<K>; y, acc: u<N>) returns (res: u<N + K>);
+  size K, N
+  where
+    K > 0;
+    N >= K;
+when K <= 1:
+  let
+    res = add(acc, if x[0] then y else 0);
+  tel
+otherwise
+  var next_y, next_acc: u<N + 1>;
+      next_x: r<K - 1>;
+      next_res: u<N + K>;
+  let
+    next_x = x[1:K];
+    next_y = shift_left(y);
+    next_acc = add(acc, if x[0] then y else 0);
+    res = 0 fby mult_pipe(next_x,  next_y, next_acc);
+  tel
+
+node multiply(x, y: u<8>) returns (res: u<16>);
+  size N
+  where N > 0;
+  let
+    res = mult_pipe(raw x, y, 0);
+  tel

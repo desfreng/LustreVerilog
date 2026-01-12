@@ -1,16 +1,18 @@
 # LustreVerilog
 
-A simple and flexible compiler for translating Lustre code to Verilog. This project was developed as part of the **Models and languages for programming reactive systems** course taught by **Timothy Bourke** and **Marc Pouzet** at the ENS during the 2024-2025 academic year.
+A simple compiler for translating template of Lustre code to Verilog. 
 
 ## Overview
 
-LustreVerilog aims to provide a straightforward way to convert Lustre specifications into synthesizable Verilog code, facilitating hardware implementation and simulation.
+LustreVerilog aims to provide a straightforward way to convert template of
+Lustre specifications into synthesizable Verilog code, 
+facilitating hardware implementation and simulation.
 
 ## Requirements
 
 ### System Requirements
 
-*   **Haskell Toolchain:** Cabal and GHC (Glasgow Haskell Compiler)
+*   **Haskell Toolchain:** Cabal and GHC (version 9.12.2)
 *   **Build System:** CMake
 *   **Verilog Simulator:** Verilator
 *   **Waveform Viewer:** GTKWave
@@ -99,6 +101,7 @@ LustreVerilog/
 │   ├── Compiling/           # Compilation logic
 │   ├── LustreVerilog.hs     # Main compiler module
 │   ├── Parsing/             # Lustre parsing logic
+│   ├── Solver/              # ILP solver for constraints checking
 │   ├── Typing/              # Type checking logic
 │   └── Verilog/             # Verilog-related utilities
 ├── stdlib/              # Standard library of Lustre nodes
@@ -106,7 +109,7 @@ LustreVerilog/
 ├── test/                # Example Lustre files and testbenches
 │   ├── add/                 # Example: Adder design
 │   │   ├── main.lus             # Lustre specification
-│   │   └── top.c                # C++ testbench wrapper
+│   │   └── top.cpp              # C++ testbench wrapper
 │   └── ...                  # Other test examples (and, concat, eq, etc.)
 ├── CMakeLists.txt       # CMake build configuration file
 ├── LICENSE              # License file
@@ -114,6 +117,99 @@ LustreVerilog/
 ├── README.md            # This file
 └── slides/              # Slides for the project presentation
 ```
+
+## Input Language Format
+
+The compiler accepts a synchronous dataflow language inspired by **Lustre**. 
+The program consists of a list of `node` definitions.
+
+### 1. Node Structure
+
+A node is defined by its interface (inputs/outputs), optional parametric size
+constraints, local variables, and a body of equations.
+
+```lustre
+node nodeName(input1: type; input2: type) returns (output1: type)
+  size N
+  where N > 0;  // Optional parametric size declaration
+  var
+    local_var: type;      // Local variables
+  let
+    local_var = expression;
+    output1 = local_var + input1;
+  tel
+```
+
+### 2. Data Types
+
+The language supports standard primitives and explicit bit-sized integers:
+
+| Type | Syntax | Description |
+| --- | --- | --- |
+| **Boolean** | `bool` | True/False logic. |
+| **Integer** | `int` | Compile time sized integer (by default 32 bits) |
+| **Unsigned** | `u<N>` | Unsigned integer of width `N` (e.g., `u<8>`). |
+| **Signed** | `i<N>` | Signed integer of width `N` (e.g., `i<16>`). |
+| **Raw** | `r<N>` | Raw bit-vector of width `N`. |
+
+### 3. Operators & Expressions
+
+* **Arithmetic:** `+`, `-`, `*`, `/`
+* **Logic:** `and`, `or`, `not`
+* **Comparison:** `==`, `<>`, `>=`, `<=`, `>`, `<`
+* **Temporal:**
+* `fby`: "Followed by" operator (e.g., `init fby next`).
+
+
+* **Bitwise/Arrays:**
+* `++`: Concatenation.
+* `x[i]`: Indexing.
+* `x[i:j]`: Slicing/Range selection from `i` inclusive to `j` exclusive.
+
+
+* **Type Casting:** `raw`, `signed`, `unsigned` (used as unary prefixes).
+* **Control Flow:** `if condition then expr else expr`.
+
+### 4. Advanced Features
+
+#### Parametric Sizes
+
+You can define nodes that accept generic size parameters.
+Constraints on these sizes can be enforced using the `where` clause.
+Size expression are affine expression of the declared size variables
+(ex. `N + 3*M + 1`).
+
+```lustre
+// A node handling parametric bit-widths
+node parametricAdd(x: u<N>; y: u<N>) returns (z: u<N>)
+  size N
+  where
+    N > 0;
+    N <= 64
+  let
+    z = x + y;
+  tel
+```
+
+#### Structural Branching
+
+The node body can be split based on size criteria using `when` and `otherwise`:
+
+```lustre
+node conditionalBody(x: u<N>) returns (y: u<N>)
+  size n
+  when n == 1
+    let
+      y = x;
+    tel
+  otherwise
+    let
+      y = x + 1
+    tel
+```
+
+See `test/` for multiple examples and `src/Parsing/Grammar.y` for
+a yacc like grammar definition.
 
 ## License
 This project is licensed under the GPL3 license. See the `LICENSE` file for details.

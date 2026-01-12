@@ -1,10 +1,9 @@
 #include <cstdint>
-#include <iostream>
 #include <random>
 #include <verilated.h>
 #include <verilated_vcd_c.h>
 
-#include "VxorN.h"
+#include "VmultiplyN.h"
 
 #ifndef WAVEFORM_FILE
 #define WAVEFORM_FILE "waveform.vcd"
@@ -17,7 +16,7 @@ int main(int argc, char **argv, char **env) {
   Verilated::commandArgs(argc, argv);
 
   vluint64_t sim_time = 0;
-  VxorN dut = VxorN();
+  VmultiplyN dut = VmultiplyN();
 
   Verilated::traceEverOn(true);
   VerilatedVcdC trace = VerilatedVcdC();
@@ -28,12 +27,17 @@ int main(int argc, char **argv, char **env) {
   dut.reset_n = 1; // Reset is Active Low
 
   std::random_device rd;
-  std::uniform_int_distribution<std::uint32_t> dist(
-      0, std::numeric_limits<uint32_t>::max());
+  std::uniform_int_distribution<uint8_t> dist(0, 255);
+
+  dut.clock = 1;
+  dut.eval();
+
+  dut.clock = 0;
+  dut.eval();
 
   for (size_t i = 0; i < SIM_TIME; i++) {
-    const uint32_t x = dist(rd);
-    const uint32_t y = dist(rd);
+    const uint8_t x = dist(rd);
+    const uint8_t y = dist(rd);
 
     dut.clock = 1;
     dut.var_x = x;
@@ -41,12 +45,6 @@ int main(int argc, char **argv, char **env) {
 
     dut.eval();
     trace.dump(2 * i);
-
-    if (dut.var_out != (x xor y)) {
-      std::cerr << "Error at cycle " << i
-                << " (expected: " << (int64_t)(x xor y)
-                << " found: " << (int64_t)(dut.var_out) << ")" << std::endl;
-    }
 
     dut.clock = 0;
     dut.eval();

@@ -34,7 +34,7 @@ execute_process(
 message("We have ${VERILATOR_INCLUDE}")
 
 function(lustre_test TEST_NAME)
-    set(oneValueArgs LUSTRE TOP)
+    set(oneValueArgs LUSTRE TOP NODE)
     set(multiValueArgs VERILATOR_ARGS) 
 
     cmake_parse_arguments(PARSE_ARGV 0 arg "" "${oneValueArgs}" "${multiValueArgs}")
@@ -45,6 +45,10 @@ function(lustre_test TEST_NAME)
 
     if(NOT arg_TOP)
         set(arg_TOP "top.cpp")
+    endif()
+
+    if(NOT arg_NODE)
+        set(arg_NODE "main")
     endif()
 
     set(TEST_SOURCE_PATH ${TEST_DIR}/${TEST_NAME})
@@ -61,7 +65,7 @@ function(lustre_test TEST_NAME)
     set(OUT_WAVEFORM ${TEST_BUILD_PATH}/waveform.vcd)
 
     execute_process(
-        COMMAND cabal run LustreVerilog -- --output ${OUT_VERILOG} --main-node main --int-size 32 --reset-high ${IN_LUSTRE}
+        COMMAND cabal run LustreVerilog -- --output ${OUT_VERILOG} --main-node ${arg_NODE} --int-size 32 --reset-high ${IN_LUSTRE}
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
         COMMAND_ERROR_IS_FATAL ANY
     )
@@ -74,7 +78,7 @@ function(lustre_test TEST_NAME)
         DIRECTORY ${TEST_BUILD_PATH}
         TOP_MODULE main
         INCLUDE_DIRS ${VERILATOR_INCLUDE}
-        VERILATOR_ARGS ${VERILATOR_ARGS}
+        VERILATOR_ARGS ${arg_VERILATOR_ARGS} -sv
         TRACE_VCD
     )
 
@@ -124,7 +128,7 @@ function(verilog_test TEST_NAME)
         DIRECTORY ${TEST_BUILD_PATH}
         TOP_MODULE main
         INCLUDE_DIRS ${VERILATOR_INCLUDE}
-        VERILATOR_ARGS ${VERILATOR_ARGS}
+        VERILATOR_ARGS ${VERILATOR_ARGS} -sv
         TRACE_VCD
     )
 
@@ -158,7 +162,10 @@ lustre_test(slides-ex3)
 lustre_test(sub)
 lustre_test(ucmp)
 lustre_test(fulladder)
-lustre_test(xorN VERILATOR_ARGS "-GN=4")
+lustre_test(xorN VERILATOR_ARGS "-GN=4" NODE xor)
+lustre_test(reverse)
+lustre_test(popcount VERILATOR_ARGS "-GN=16" NODE popcount)
+lustre_test(multiplyN NODE multiply)
 
 verilog_test(verilog-playground)
 verilog_test(slides-ex1)

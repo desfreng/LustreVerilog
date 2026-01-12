@@ -6,12 +6,14 @@ module Verilog.Ast where
 
 import Commons.Ast (Body)
 import Commons.Ids (Ident, NodeIdent, SizeIdent)
-import Commons.Size (Size, constantSize, isNull, subSize)
+import Commons.Size (Size, constantSize, isNull, prettyRatio, splitSize, subSize)
 import Compiling.Ast (CBinOp, CUnOp)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Map (Map)
 import Data.RatioInt (RatioInt)
 import Prettyprinter (Doc, Pretty (pretty), unsafeViaShow, (<+>))
+import Prettyprinter.Symbols.Ascii (parens)
+import Solver.VectorSpace (vIsNull)
 
 data Constant = Constant
   { valueSize :: Size,
@@ -105,7 +107,13 @@ instance Monoid Ast where
 
 instance Pretty Constant where
   pretty :: Constant -> Doc ann
-  pretty Constant {valueSize, value} = pretty valueSize <> "'d" <> pretty value
+  pretty Constant {valueSize, value} =
+    let (varPart, cst) = splitSize valueSize
+     in if vIsNull varPart
+          then
+            prettyRatio cst <> "'d" <> pretty value
+          else
+            parens (pretty valueSize) <> "'" <> parens (pretty value)
 
 instance Show BaseModule where
   show :: BaseModule -> String

@@ -1,0 +1,36 @@
+node reverse(x: r<N>) returns (revX: r<N>);
+  size N
+  where
+    N > 0
+  when N <= 1:
+    let
+      revX = x;
+    tel
+  otherwise
+    let
+      revX = x[0:1] ++ reverse(x[1:N]);
+    tel
+
+node eqBool(x, y: bool) returns (isEq: bool);
+  let
+    isEq = (x and y) or (not x and not y);
+  tel
+
+node isReversed(x, y: r<N>) returns (ok: bool);
+  size N
+  where
+    N > 0
+  when N <= 1:
+    let
+      ok = y == x;
+    tel
+  otherwise
+    let
+      ok = eqBool(x[0], y[N-1]) and isReversed(x[1:N], y[0:N-1]);
+    tel
+
+node main(x: r<16>) returns (revX: r<16>; isGood: bool);
+  let
+    revX = reverse(x);
+    isGood = isReversed(x, revX);
+  tel

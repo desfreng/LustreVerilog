@@ -4,7 +4,7 @@
 #include <verilated.h>
 #include <verilated_vcd_c.h>
 
-#include "VxorN.h"
+#include "Vreverse.h"
 
 #ifndef WAVEFORM_FILE
 #define WAVEFORM_FILE "waveform.vcd"
@@ -17,7 +17,7 @@ int main(int argc, char **argv, char **env) {
   Verilated::commandArgs(argc, argv);
 
   vluint64_t sim_time = 0;
-  VxorN dut = VxorN();
+  Vreverse dut = Vreverse();
 
   Verilated::traceEverOn(true);
   VerilatedVcdC trace = VerilatedVcdC();
@@ -37,16 +37,9 @@ int main(int argc, char **argv, char **env) {
 
     dut.clock = 1;
     dut.var_x = x;
-    dut.var_y = y;
 
     dut.eval();
     trace.dump(2 * i);
-
-    if (dut.var_out != (x xor y)) {
-      std::cerr << "Error at cycle " << i
-                << " (expected: " << (int64_t)(x xor y)
-                << " found: " << (int64_t)(dut.var_out) << ")" << std::endl;
-    }
 
     dut.clock = 0;
     dut.eval();
