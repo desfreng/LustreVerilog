@@ -33,7 +33,7 @@ when K <= 1:
 otherwise
   var next_y, next_acc: u<N + 1>;
       next_x: r<K - 1>;
-      next_res: u<N + K>;
+      next_acc: u<N + K>;
   let
     next_x = x[1:K];
     next_y = shift_left(y);

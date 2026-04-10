@@ -17,7 +17,7 @@ int main(int argc, char **argv, char **env) {
   Verilated::commandArgs(argc, argv);
 
   vluint64_t sim_time = 0;
-  Vfby dut = Vfby();
+  Vfby dut{};
 
   std::random_device rd;
   std::uniform_int_distribution<size_t> dist(0, SIM_TIME / 2);
@@ -26,7 +26,7 @@ int main(int argc, char **argv, char **env) {
   bool must_be_true = false;
 
   Verilated::traceEverOn(true);
-  VerilatedVcdC trace = VerilatedVcdC();
+  VerilatedVcdC trace{};
 
   dut.trace(&trace, 5);
   trace.open(WAVEFORM_FILE);

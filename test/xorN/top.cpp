@@ -17,10 +17,10 @@ int main(int argc, char **argv, char **env) {
   Verilated::commandArgs(argc, argv);
 
   vluint64_t sim_time = 0;
-  VxorN dut = VxorN();
+  VxorN dut{};
 
   Verilated::traceEverOn(true);
-  VerilatedVcdC trace = VerilatedVcdC();
+  VerilatedVcdC trace{};
 
   dut.trace(&trace, 5);
   trace.open(WAVEFORM_FILE);
@@ -28,12 +28,12 @@ int main(int argc, char **argv, char **env) {
   dut.reset_n = 1; // Reset is Active Low
 
   std::random_device rd;
-  std::uniform_int_distribution<std::uint32_t> dist(
-      0, std::numeric_limits<uint32_t>::max());
+  std::uniform_int_distribution<std::uint8_t> dist(
+      0, std::numeric_limits<uint8_t>::max());
 
   for (size_t i = 0; i < SIM_TIME; i++) {
-    const uint32_t x = dist(rd);
-    const uint32_t y = dist(rd);
+    const uint8_t x = dist(rd);
+    const uint8_t y = dist(rd);
 
     dut.clock = 1;
     dut.var_x = x;

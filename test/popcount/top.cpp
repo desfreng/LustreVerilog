@@ -18,10 +18,10 @@ int main(int argc, char **argv, char **env) {
   Verilated::commandArgs(argc, argv);
 
   vluint64_t sim_time = 0;
-  Vpopcount dut = Vpopcount();
+  Vpopcount dut{};
 
   Verilated::traceEverOn(true);
-  VerilatedVcdC trace = VerilatedVcdC();
+  VerilatedVcdC trace{};
 
   dut.trace(&trace, 5);
   trace.open(WAVEFORM_FILE);

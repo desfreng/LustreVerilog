@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.31)
 project(lustre-verilog)
+set(CMAKE_CXX_STANDARD 20)
 
 set(TEST_DIR ${CMAKE_SOURCE_DIR}/test)
 
@@ -38,7 +39,7 @@ function(lustre_test TEST_NAME)
     set(multiValueArgs VERILATOR_ARGS) 
 
     cmake_parse_arguments(PARSE_ARGV 0 arg "" "${oneValueArgs}" "${multiValueArgs}")
-    
+
     if(NOT arg_LUSTRE)
         set(arg_LUSTRE "main.lus")
     endif()
@@ -162,7 +163,7 @@ lustre_test(slides-ex3)
 lustre_test(sub)
 lustre_test(ucmp)
 lustre_test(fulladder)
-lustre_test(xorN VERILATOR_ARGS "-GN=4" NODE xor)
+lustre_test(xorN VERILATOR_ARGS "-GN=8" NODE xor)
 lustre_test(reverse)
 lustre_test(popcount VERILATOR_ARGS "-GN=16" NODE popcount)
 lustre_test(multiplyN NODE multiply)
